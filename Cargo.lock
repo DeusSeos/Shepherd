@@ -759,6 +759,8 @@ name = "rancher-cac"
 version = "0.1.0"
 dependencies = [
  "rancher_client",
+ "reqwest",
+ "serde",
  "serde_json",
  "serde_yaml",
 ]

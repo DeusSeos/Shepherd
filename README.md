@@ -8,7 +8,7 @@ A configuration-as-code project for managing Rancher deployments and resources p
 - Support for GitOps workflows
 - CLI and library interfaces (WIP)
 - Validation and dry-run modes
-- Integration with Rancher API
+- Integration with RK-API
 
 ## Project Goals
 
