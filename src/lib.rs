@@ -2,6 +2,7 @@
 pub mod cluster;
 pub mod project;
 pub mod rt;
+pub mod prtb;
 
 use rancher_client::apis::configuration::{ApiKey, Configuration};
 
