@@ -1,9 +1,9 @@
 // This file will contain all the functions that will be used to interact and extract from the Rancher API
 pub mod cluster;
+pub mod project;
+pub mod rt;
 
 use rancher_client::apis::configuration::{ApiKey, Configuration};
-
-use crate::cluster::get_clusters;
 
 
 pub fn rancher_config_init(host: &str, token: &str) -> Configuration {
