@@ -9,6 +9,7 @@ use rancher_client::{
     },
     models::{
         IoCattleManagementv3RoleTemplate, IoCattleManagementv3RoleTemplateList,
+        IoCattleManagementv3GlobalRoleRulesInner,
          IoK8sApimachineryPkgApisMetaV1ObjectMeta,
     },
     models::io_cattle_managementv3_role_template::Context,
@@ -82,23 +83,48 @@ pub async fn get_role_templates(
 
 #[derive(Serialize, Deserialize)]
 pub struct RoleTemplate {
-    id: String,
-    name: String,
-    description: String,
-    context: String,
     builtin: bool,
+    cluster_creator_default: bool,
+    context: String,
+    description: String,
+    display_name: String,
     external: bool,
+    hidden: bool,
+    locked: bool,
+    id: String,
+    project_creator_default: bool,
+    role_template_names: Vec<String>,
+    rules: Vec<IoCattleManagementv3GlobalRoleRulesInner>,
 }
 
 impl RoleTemplate {
-    pub fn new(id: String, name: String, description: String, context: String, builtin: bool, external: bool) -> Self {
+    pub fn new(
+        builtin: bool,
+        cluster_creator_default: bool,
+        context: String,
+        description: String,
+        display_name: String,
+        external: bool,
+        hidden: bool,
+        locked: bool,
+        id: String,
+        project_creator_default: bool,
+        role_template_names: Vec<String>,
+        rules: Vec<IoCattleManagementv3GlobalRoleRulesInner>,
+    ) -> RoleTemplate {
         RoleTemplate {
-            id,
-            name,
-            description,
-            context,
             builtin,
+            cluster_creator_default,
+            context,
+            description,
+            display_name,
             external,
+            hidden,
+            locked,
+            id,
+            project_creator_default,
+            role_template_names,
+            rules,
         }
     }
 }
@@ -117,13 +143,99 @@ impl TryFrom<IoCattleManagementv3RoleTemplate> for RoleTemplate {
             None => return Err("missing context"),
         }.to_string();
 
+        let rules: Vec<IoCattleManagementv3GlobalRoleRulesInner> =
+            value.rules.ok_or("missing rules")?;
+
+        let role_template_names: Vec<String> =
+            value
+                .role_template_names
+                .ok_or("missing role_template_names")?;
+        let builtin: bool = value.builtin.unwrap_or(false);
+        let cluster_creator_default: bool = value.cluster_creator_default.unwrap_or(false);
+        let description: String = value.description.unwrap_or_default();
+        let display_name: String = value.display_name.unwrap_or_default();
+        let external: bool = value.external.unwrap_or(false);
+        let hidden: bool = value.hidden.unwrap_or(false);
+        let locked: bool = value.locked.unwrap_or(false);
+        let project_creator_default: bool = value.project_creator_default.unwrap_or(false);
+
         Ok(RoleTemplate {
-            id: metadata.name.ok_or("missing name")?,
-            name: value.display_name.unwrap_or_else(|| metadata.name.ok_or("missing name")?),
-            description: value.description.unwrap_or_else(|| "".to_string()),
+            builtin,
+            cluster_creator_default,
             context: context_str,
-            builtin: value.builtin.unwrap_or(false),
-            external: value.external.unwrap_or(false),
+            description,
+            display_name,
+            external,
+            hidden,
+            locked,
+            id: metadata.name.ok_or("missing metadata.name")?,
+            project_creator_default,
+            role_template_names,
+            rules,
         })
     }
 }
+
+
+
+/*
+{
+      "apiVersion": "management.cattle.io/v3",
+      "builtin": true,
+      "context": "project",
+      "description": "",
+      "displayName": "Kubernetes admin",
+      "external": true,
+      "hidden": true,
+      "kind": "RoleTemplate",
+      "metadata": {
+        "annotations": {
+          "cleanup.cattle.io/rtUpgradeCluster": "true",
+          "lifecycle.cattle.io/create.mgmt-auth-roletemplate-lifecycle": "true"
+        },
+        "creationTimestamp": "2024-12-21T00:56:32Z",
+        "finalizers": [
+          "controller.cattle.io/mgmt-auth-roletemplate-lifecycle"
+        ],
+        "generation": 1,
+        "labels": {
+          "authz.management.cattle.io/bootstrapping": "default-roletemplate"
+        },
+        "managedFields": [
+          {
+            "apiVersion": "management.cattle.io/v3",
+            "fieldsType": "FieldsV1",
+            "fieldsV1": {
+              "f:builtin": {},
+              "f:context": {},
+              "f:description": {},
+              "f:displayName": {},
+              "f:external": {},
+              "f:hidden": {},
+              "f:metadata": {
+                "f:annotations": {
+                  ".": {},
+                  "f:cleanup.cattle.io/rtUpgradeCluster": {},
+                  "f:lifecycle.cattle.io/create.mgmt-auth-roletemplate-lifecycle": {}
+                },
+                "f:finalizers": {
+                  ".": {},
+                  "v:\"controller.cattle.io/mgmt-auth-roletemplate-lifecycle\"": {}
+                },
+                "f:labels": {
+                  ".": {},
+                  "f:authz.management.cattle.io/bootstrapping": {}
+                }
+              }
+            },
+            "manager": "rancher",
+            "operation": "Update",
+            "time": "2024-12-21T00:56:42Z"
+          }
+        ],
+        "name": "admin",
+        "resourceVersion": "2477",
+        "uid": "286e37c7-3117-466e-9eff-f8ce07b53c44"
+      }
+    },
+*/
