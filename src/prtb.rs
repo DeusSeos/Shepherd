@@ -11,7 +11,7 @@ use rancher_client::{
         IoCattleManagementv3ProjectRoleTemplateBinding, IoCattleManagementv3ProjectRoleTemplateBindingList,
          IoK8sApimachineryPkgApisMetaV1ObjectMeta,
     },
-    models::io_cattle_managementv3_role_template::Context,
+    // models::io_cattle_managementv3_role_template::Context,
 };
 
 /// Get all project role template bindings from an endpoint using the provided configuration
@@ -81,21 +81,37 @@ pub async fn get_project_role_template_bindings(
 
 #[derive(Serialize, Deserialize)]
 pub struct ProjectRoleTemplateBinding {
+    /// The name of the project role template binding (typically the Kubernetes metadata.name).
     id: String,
-    name: String,
-    user_id: String,
-    role_template_id: String,
-    project_id: String,
+
+    group_name: String,
+    group_principal_name: String,
+    project_name: String,
+    role_template_name: String,
+    service_account: String,
+    user_name: String,
+    user_principal_name: String,
 }
 
 impl ProjectRoleTemplateBinding {
-    pub fn new(id: String, name: String, user_id: String, role_template_id: String, project_id: String) -> Self {
+    pub fn new(
+        id: String,
+        group_name: String,
+        group_principal_name: String,
+        project_name: String,
+        role_template_name: String,
+        service_account: String,
+        user_name: String,
+        user_principal_name: String) -> Self {
         ProjectRoleTemplateBinding {
+            group_name,
+            group_principal_name,
             id,
-            name,
-            user_id,
-            role_template_id,
-            project_id,
+            project_name,
+            role_template_name,
+            service_account,
+            user_name,
+            user_principal_name
         }
     }
 }
@@ -108,11 +124,111 @@ impl TryFrom<IoCattleManagementv3ProjectRoleTemplateBinding> for ProjectRoleTemp
             *value.metadata.ok_or("missing metadata")?;
         
         Ok(ProjectRoleTemplateBinding {
-            id: metadata.name.ok_or("missing name")?,
-            name: metadata.name.ok_or("missing name")?,
-            user_id: value.user_id.ok_or("missing user_id")?,
-            role_template_id: value.role_template_id.ok_or("missing role_template_id")?,
-            project_id: value.project_id.ok_or("missing project_id")?,
+            group_name: value.group_name.unwrap_or_else(|| "".to_string()),
+            group_principal_name: value.group_principal_name.unwrap_or_else(|| "".to_string()),
+            id: metadata.name.ok_or("missing metadata.name")?,
+            project_name: value.project_name,
+            role_template_name: value.role_template_name,
+            service_account: value.service_account.unwrap_or_else(|| "".to_string()),
+            user_name: value.user_name.unwrap_or_else(|| "".to_string()),
+            user_principal_name: value.user_principal_name.unwrap_or_else(|| "".to_string()),
         })
     }
 }
+
+
+
+/*
+    {
+      "apiVersion": "management.cattle.io/v3",
+      "kind": "ProjectRoleTemplateBinding",
+      "metadata": {
+        "annotations": {
+          "lifecycle.cattle.io/create.cluster-prtb-sync_local": "true",
+          "lifecycle.cattle.io/create.mgmt-auth-prtb-controller": "true"
+        },
+        "creationTimestamp": "2024-12-22T15:43:56Z",
+        "finalizers": [
+          "controller.cattle.io/mgmt-auth-prtb-controller",
+          "clusterscoped.controller.cattle.io/cluster-prtb-sync_local"
+        ],
+        "generation": 2,
+        "labels": {
+          "auth.management.cattle.io/crb-rb-labels-updated": "true",
+          "authz.cluster.cattle.io/crb-rb-labels-updated": "true",
+          "cattle.io/creator": "norman"
+        },
+        "managedFields": [
+          {
+            "apiVersion": "management.cattle.io/v3",
+            "fieldsType": "FieldsV1",
+            "fieldsV1": {
+              "f:metadata": {
+                "f:annotations": {
+                  ".": {},
+                  "f:lifecycle.cattle.io/create.mgmt-auth-prtb-controller": {}
+                },
+                "f:finalizers": {
+                  ".": {},
+                  "v:\"controller.cattle.io/mgmt-auth-prtb-controller\"": {}
+                },
+                "f:labels": {
+                  ".": {},
+                  "f:cattle.io/creator": {}
+                }
+              },
+              "f:projectName": {},
+              "f:roleTemplateName": {},
+              "f:userName": {},
+              "f:userPrincipalName": {}
+            },
+            "manager": "rancher",
+            "operation": "Update",
+            "time": "2024-12-22T15:43:57Z"
+          },
+          {
+            "apiVersion": "management.cattle.io/v3",
+            "fieldsType": "FieldsV1",
+            "fieldsV1": {
+              "f:metadata": {
+                "f:labels": {
+                  "f:auth.management.cattle.io/crb-rb-labels-updated": {}
+                }
+              }
+            },
+            "manager": "rancher-v2.10.1-mgmt-auth-crtb-prtb-controller",
+            "operation": "Update",
+            "time": "2024-12-22T15:43:57Z"
+          },
+          {
+            "apiVersion": "management.cattle.io/v3",
+            "fieldsType": "FieldsV1",
+            "fieldsV1": {
+              "f:metadata": {
+                "f:annotations": {
+                  "f:lifecycle.cattle.io/create.cluster-prtb-sync_local": {}
+                },
+                "f:finalizers": {
+                  "v:\"clusterscoped.controller.cattle.io/cluster-prtb-sync_local\"": {}
+                },
+                "f:labels": {
+                  "f:authz.cluster.cattle.io/crb-rb-labels-updated": {}
+                }
+              }
+            },
+            "manager": "rancher-v2.10.1-rbac-handler-base",
+            "operation": "Update",
+            "time": "2024-12-22T15:43:57Z"
+          }
+        ],
+        "name": "creator-project-owner",
+        "namespace": "p-w82pc",
+        "resourceVersion": "179765",
+        "uid": "5a2abcb1-c09b-4d26-a9b5-fcbe4b454d3e"
+      },
+      "projectName": "local:p-w82pc",
+      "roleTemplateName": "project-owner",
+      "userName": "user-jzh8l",
+      "userPrincipalName": "local://user-jzh8l"
+    }
+*/
