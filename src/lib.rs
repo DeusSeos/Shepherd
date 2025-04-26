@@ -101,7 +101,7 @@ pub async fn download_current_configuration(configuration: Configuration, path: 
         }
 
         // save the cluster to the folder
-        let cluster_file = cluster_path.join(format!("{}{}", cluster.id, file_extension_from_format(&file_format)));
+        let cluster_file = cluster_path.join(format!("{}.{}", cluster.id, file_extension_from_format(&file_format)));
         let _ = std::fs::write(&cluster_file, serialize_object(cluster, &file_format)).map_err(|e| {
             println!("Failed to write file: {:?}", e);
             std::process::exit(1);
@@ -137,7 +137,7 @@ pub async fn download_current_configuration(configuration: Configuration, path: 
             }
 
             // save the project to the folder
-            let project_file = project_path.join(format!("{}{}", project.id, file_extension_from_format(&file_format)));
+            let project_file = project_path.join(format!("{}.{}", project.id, file_extension_from_format(&file_format)));
             let _ = std::fs::write(&project_file, serialize_object(project, &file_format)).map_err(|e| {
                 println!("Failed to write file: {:?}", e);
                 std::process::exit(1);

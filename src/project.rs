@@ -100,8 +100,9 @@ pub struct Project {
     pub description: String,
 
     /// Default container resource limits applied within the project namespaces.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub container_default_resource_limit:
-        IoCattleManagementv3ProjectSpecContainerDefaultResourceLimit,
+        Option<IoCattleManagementv3ProjectSpecContainerDefaultResourceLimit>,
 
     /// Human-readable display name for the project.
     pub display_name: String,
@@ -111,10 +112,10 @@ pub struct Project {
 
     /// Default resource quotas applied at the namespace level.
     pub namespace_default_resource_quota:
-        IoCattleManagementv3ProjectSpecNamespaceDefaultResourceQuota,
+        Option<IoCattleManagementv3ProjectSpecNamespaceDefaultResourceQuota>,
 
     /// Resource quota limits applied at the project level.
-    pub resource_quota: IoCattleManagementv3ProjectSpecResourceQuotaLimit,
+    pub resource_quota: Option<IoCattleManagementv3ProjectSpecResourceQuotaLimit>,
 }
 
 impl Project {
@@ -123,10 +124,10 @@ impl Project {
         id: String,
         display_name: String,
         description: String,
-        container_default_resource_limit: IoCattleManagementv3ProjectSpecContainerDefaultResourceLimit,
+        container_default_resource_limit: Option<IoCattleManagementv3ProjectSpecContainerDefaultResourceLimit>,
         enable_project_monitoring: bool,
-        namespace_default_resource_quota: IoCattleManagementv3ProjectSpecNamespaceDefaultResourceQuota,
-        resource_quota: IoCattleManagementv3ProjectSpecResourceQuotaLimit,
+        namespace_default_resource_quota: Option<IoCattleManagementv3ProjectSpecNamespaceDefaultResourceQuota>,
+        resource_quota: Option<IoCattleManagementv3ProjectSpecResourceQuotaLimit>,
     ) -> Self {
         Project {
             cluster_name,
@@ -141,36 +142,108 @@ impl Project {
     }
 }
 
+
+// impl TryFrom<IoCattleManagementv3Project> for Project {
+//     type Error = &'static str;
+
+//     fn try_from(value: IoCattleManagementv3Project) -> Result<Self, Self::Error> {
+//         let metadata: IoK8sApimachineryPkgApisMetaV1ObjectMeta =
+//             *value.metadata.ok_or("missing metadata")?;
+
+//         let spec: IoCattleManagementv3ProjectSpec = *value.spec.ok_or("missing spec")?;
+
+//         let container_default_resource_limit = spec
+//             .container_default_resource_limit;
+
+//         let namespace_default_resource_quota = spec
+//             .namespace_default_resource_quota;
+
+//         // let resource_quota = resource_quota;
+
+//         let resource_quota = match spec.resource_quota {
+//             Some(ref quota) => Some(*quota.clone()),
+//             None => None,
+//         };
+
+//         let resource_quota_limit = match resource_quota {
+//             Some(quota) => quota.limit,
+//             None => None,
+//         };
+
+//         Ok(Project {
+//             cluster_name: spec.cluster_name,
+//             id: metadata.name.ok_or("missing metadata.name")?,
+//             description: spec.description.unwrap_or_default(),
+//             container_default_resource_limit: container_default_resource_limit.as_deref().cloned(),
+//             display_name: spec.display_name,
+//             enable_project_monitoring: spec.enable_project_monitoring.unwrap_or(false),
+//             namespace_default_resource_quota: namespace_default_resource_quota.as_deref().cloned(),
+//             resource_quota: resource_quota_limit.as_deref().cloned(),
+//         })
+//     }
+// }
+
 impl TryFrom<IoCattleManagementv3Project> for Project {
     type Error = &'static str;
 
     fn try_from(value: IoCattleManagementv3Project) -> Result<Self, Self::Error> {
-        let metadata: IoK8sApimachineryPkgApisMetaV1ObjectMeta =
-            *value.metadata.ok_or("missing metadata")?;
-
-        let spec: IoCattleManagementv3ProjectSpec = *value.spec.ok_or("missing spec")?;
+        let metadata = value.metadata.ok_or("missing metadata")?;
+        let spec = value.spec.ok_or("missing spec")?;
 
         let container_default_resource_limit = spec
             .container_default_resource_limit
-            .ok_or("missing container_default_resource_limit")?;
+            .map(|b| *b);
 
         let namespace_default_resource_quota = spec
             .namespace_default_resource_quota
-            .ok_or("missing namespace_default_resource_quota")?;
+            .map(|b| *b);
 
-        let resource_quota = spec.resource_quota.ok_or("missing resource_quota")?;
-
-        let resource_quota_limit = resource_quota.limit.ok_or("missing resource_quota.limit")?;
+            let resource_quota_limit = spec
+            .resource_quota
+            .and_then(|b| b.limit.map(|b| *b));
+        
 
         Ok(Project {
             cluster_name: spec.cluster_name,
             id: metadata.name.ok_or("missing metadata.name")?,
             description: spec.description.unwrap_or_default(),
-            container_default_resource_limit: *container_default_resource_limit,
+            container_default_resource_limit,
             display_name: spec.display_name,
             enable_project_monitoring: spec.enable_project_monitoring.unwrap_or(false),
-            namespace_default_resource_quota: *namespace_default_resource_quota,
-            resource_quota: *resource_quota_limit,
+            namespace_default_resource_quota,
+            resource_quota: resource_quota_limit,
         })
     }
 }
+
+// impl TryFrom<IoCattleManagementv3Project> for Project {
+//     type Error = &'static str;
+
+//     fn try_from(value: IoCattleManagementv3Project) -> Result<Self, Self::Error> {
+//         let metadata = value.metadata.ok_or("missing metadata")?;
+//         let spec = value.spec.ok_or("missing spec")?;
+
+//         let container_default_resource_limit = spec
+//             .container_default_resource_limit
+//             .map(|b| *b);
+
+//         let namespace_default_resource_quota = spec
+//             .namespace_default_resource_quota
+//             .map(|b| *b);
+
+//         let resource_quota = spec
+//             .resource_quota
+//             .and_then(|b| b.limit.map(|limit| *limit));
+
+//         Project::new(
+//             spec.cluster_name,
+//             metadata.name.ok_or("missing metadata.name")?,
+//             spec.display_name,
+//             spec.description.unwrap_or_default(),
+//             container_default_resource_limit,
+//             spec.enable_project_monitoring.unwrap_or(false),
+//             namespace_default_resource_quota,
+//             resource_quota,
+//         ).into()
+//     }
+// }
