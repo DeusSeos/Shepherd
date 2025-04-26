@@ -5,9 +5,11 @@ use reqwest::StatusCode;
 
 use rancher_client::{
     apis::management_cattle_io_v3_api::{
-        list_management_cattle_io_v3_project_role_template_binding_for_all_namespaces, ListManagementCattleIoV3ProjectRoleTemplateBindingForAllNamespacesError,
+      list_management_cattle_io_v3_namespaced_project_role_template_binding, ListManagementCattleIoV3NamespacedProjectRoleTemplateBindingError,
+      list_management_cattle_io_v3_project_role_template_binding_for_all_namespaces, ListManagementCattleIoV3ProjectRoleTemplateBindingForAllNamespacesError,
     },
     models::{
+
         IoCattleManagementv3ProjectRoleTemplateBinding, IoCattleManagementv3ProjectRoleTemplateBindingList,
          IoK8sApimachineryPkgApisMetaV1ObjectMeta,
     },
@@ -78,6 +80,77 @@ pub async fn get_project_role_template_bindings(
         }
     }
 }
+
+
+/// Get all project role template bindings from a namespace using the provided configuration
+///
+/// # Arguments
+///
+/// * `configuration` - The configuration to use for the request
+/// * `cluster_id` - The ID of the cluster (namespace) to get the project role template bindings for
+///
+/// # Returns
+///
+/// * `IoCattleManagementv3ProjectRoleTemplateBindingList` - The list of project role template bindings
+///
+/// # Errors
+///
+/// * `Error<ListManagementCattleIoV3ProjectRoleTemplateBindingForAllNamespacesError>` - The error that occurred while trying to get the bindings
+pub async fn get_namespaced_project_role_template_bindings(
+    configuration: &Configuration,
+    cluster_id: &str,
+) -> Result<IoCattleManagementv3ProjectRoleTemplateBindingList, Error<ListManagementCattleIoV3NamespacedProjectRoleTemplateBindingError>> {
+    let result = list_management_cattle_io_v3_namespaced_project_role_template_binding(
+        configuration,
+        cluster_id,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+    match result {
+        Err(e) => Err(e),
+        Ok(response_content) => {
+            // Match on the status code and deserialize accordingly
+            match response_content.status {
+                StatusCode::OK => {
+                    // Try to deserialize the content into IoCattleManagementv3ProjectRoleTemplateBindingList (Status200 case)
+                    match serde_json::from_str(&response_content.content) {
+                        Ok(data) => Ok(data),
+                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
+                    }
+                }
+                _ => {
+                    // If not status 200, treat as UnknownValue
+                    match serde_json::from_str::<serde_json::Value>(&response_content.content) {
+                        Ok(unknown_data) => {
+                            // Handle the unknown response
+                            Err(Error::ResponseError(ResponseContent {
+                                status: response_content.status,
+                                content: response_content.content,
+                                entity: Some(ListManagementCattleIoV3NamespacedProjectRoleTemplateBindingError::UnknownValue(
+                                    unknown_data,
+                                )),
+                            }))
+                        }
+                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+
 
 #[derive(Serialize, Deserialize)]
 pub struct ProjectRoleTemplateBinding {

@@ -21,6 +21,19 @@ use rancher_client::{
 };
 
 /// Get all projects for a given namespace (cluster_id) from an endpoint using the provided configuration
+/// 
+/// # Arguments
+///
+/// * `configuration` - The configuration to use for the request
+/// * `cluster_id` - The ID of the cluster (namespace) to get the projects for
+///
+/// # Returns
+///
+/// * `ListManagementCattleIoV3ProjectList` - The list of projects
+///
+/// # Errors
+///
+/// * `Error<ListManagementCattleIoV3NamespacedProjectError>` - The error that occurred while trying to get the projects
 pub async fn get_projects(
     configuration: &Configuration,
     cluster_id: &str,
