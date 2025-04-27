@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+git2 = "0.20.1"
 rancher_client = { path = "./rancher_client_crate" }
 reqwest = "0.12.15"
 reqwest-middleware = "0.3.3"
