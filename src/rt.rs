@@ -83,18 +83,18 @@ pub async fn get_role_templates(
 
 #[derive(Serialize, Deserialize)]
 pub struct RoleTemplate {
-    builtin: bool,
-    cluster_creator_default: bool,
-    context: String,
-    description: String,
-    display_name: String,
-    external: bool,
-    hidden: bool,
-    locked: bool,
-    id: String,
-    project_creator_default: bool,
-    role_template_names: Vec<String>,
-    rules: Vec<IoCattleManagementv3GlobalRoleRulesInner>,
+    pub builtin: bool,
+    pub cluster_creator_default: bool,
+    pub context: String,
+    pub description: String,
+    pub display_name: String,
+    pub external: bool,
+    pub hidden: bool,
+    pub locked: bool,
+    pub id: String,
+    pub project_creator_default: bool,
+    pub role_template_names: Vec<String>,
+    pub rules: Vec<IoCattleManagementv3GlobalRoleRulesInner>,
 }
 
 impl RoleTemplate {
@@ -143,13 +143,8 @@ impl TryFrom<IoCattleManagementv3RoleTemplate> for RoleTemplate {
             None => return Err("missing context"),
         }.to_string();
 
-        let rules: Vec<IoCattleManagementv3GlobalRoleRulesInner> =
-            value.rules.ok_or("missing rules")?;
-
-        let role_template_names: Vec<String> =
-            value
-                .role_template_names
-                .ok_or("missing role_template_names")?;
+        let rules: Vec<IoCattleManagementv3GlobalRoleRulesInner> = value.rules.unwrap_or_default();
+        let role_template_names: Vec<String> = value.role_template_names.unwrap_or_default();
         let builtin: bool = value.builtin.unwrap_or(false);
         let cluster_creator_default: bool = value.cluster_creator_default.unwrap_or(false);
         let description: String = value.description.unwrap_or_default();
