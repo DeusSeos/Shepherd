@@ -155,15 +155,14 @@ pub async fn get_namespaced_project_role_template_bindings(
 #[derive(Serialize, Deserialize)]
 pub struct ProjectRoleTemplateBinding {
     /// The name of the project role template binding (typically the Kubernetes metadata.name).
-    id: String,
-
-    group_name: String,
-    group_principal_name: String,
-    project_name: String,
-    role_template_name: String,
-    service_account: String,
-    user_name: String,
-    user_principal_name: String,
+    pub id: String,
+    pub group_name: String,
+    pub group_principal_name: String,
+    pub project_name: String,
+    pub role_template_name: String,
+    pub service_account: String,
+    pub user_name: String,
+    pub user_principal_name: String,
 }
 
 impl ProjectRoleTemplateBinding {

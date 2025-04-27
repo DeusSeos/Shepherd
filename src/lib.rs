@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use cluster::Cluster;
 use project::Project;
+use prtb::ProjectRoleTemplateBinding;
 use rancher_client::{apis::configuration::{ApiKey, Configuration}, models::IoCattleManagementv3Cluster};
 
 pub fn rancher_config_init(host: &str, token: &str) -> Configuration {
@@ -62,18 +63,51 @@ pub async fn download_current_configuration(configuration: Configuration, path: 
         std::process::exit(1);
     }).unwrap();
 
-    let rancher_project_role_template_bindings = prtb::get_project_role_template_bindings(&configuration).await.map_err(|e| {
-        println!("Failed to get project role template bindings: {:?}", e);
-        std::process::exit(1);
-    }).unwrap();
+    // Create the base folder if it does not exist. Base folder will be the path provided and the endpoint url
+    // for example: /tmp/rancher_config/https://rancher.rd.localhost
 
-    // Create the base folder if it does not exist 
-    if !path.exists() {
-        let _ = std::fs::create_dir_all(&path).map_err(|e| {
+    let base_path = path.join(configuration.base_path.replace("https://", "").replace("/", "_"));
+    if !base_path.exists() {
+        let _ = std::fs::create_dir_all(&base_path).map_err(|e| {
             println!("Failed to create folder: {:?}", e);
             std::process::exit(1);
         });
     }
+    // create the folder for the role templates if it does not exist
+    let role_template_path = base_path.join("roles");
+    if !role_template_path.exists() {
+        let _ = std::fs::create_dir_all(&role_template_path).map_err(|e| {
+            println!("Failed to create folder: {:?}", e);
+            std::process::exit(1);
+        });
+    }
+
+    // convert the role templates to our simple struct for each object using the try_from method
+    let role_templates: Vec<rt::RoleTemplate> = rancher_role_templates
+        .items
+        .into_iter()
+        .map(|role_template| {
+            // try to convert the IoCattleManagementV3RoleTemplate to our simple RoleTemplate struct
+            // if it fails, return an error
+            role_template.try_into().map_err(|e| {
+                println!("Failed to convert role template: {:?}", e);
+                std::process::exit(1);
+            }).unwrap()
+        })
+        .collect::<Vec<rt::RoleTemplate>>();
+
+
+    // Loop through the role templates and save them to the folder
+    for role_template in &role_templates {
+        // save the role template to the folder
+        let role_template_file = role_template_path.join(format!("{}.{}", role_template.id, file_extension_from_format(&file_format)));
+        let _ = std::fs::write(&role_template_file, serialize_object(role_template, &file_format)).map_err(|e| {
+            println!("Failed to write file: {:?}", e);
+            std::process::exit(1);
+        });
+    }
+        
+
 
     // convert the items to our simple struct for each object using the try_from method
     let clusters: Vec<Cluster> = rancher_cluster
@@ -92,7 +126,7 @@ pub async fn download_current_configuration(configuration: Configuration, path: 
     // Loop through the clusters and save them to the folder
     for cluster in &clusters {
         // create the folder for the cluster if it does not exist
-        let cluster_path = path.join(cluster.id.clone());
+        let cluster_path = base_path.join(cluster.id.clone());
         if !cluster_path.exists() {
             let _ = std::fs::create_dir_all(&cluster_path).map_err(|e| {
                 println!("Failed to create folder: {:?}", e);
@@ -106,13 +140,36 @@ pub async fn download_current_configuration(configuration: Configuration, path: 
             println!("Failed to write file: {:?}", e);
             std::process::exit(1);
         });
+
+        let rancher_project_role_template_bindings = prtb::get_namespaced_project_role_template_bindings(&configuration, &cluster.id).await.map_err(|e| {
+            println!("Failed to get project role template bindings: {:?}", e);
+            std::process::exit(1);
+        }).unwrap();
+    
+        
+        // TODO: convert the conversion to a generic function
+        let prtbs: Vec<ProjectRoleTemplateBinding> = rancher_project_role_template_bindings
+        .items
+        .into_iter()
+        .map(|prtb| {
+            // try to convert the IoCattleManagementV3ProjectRoleTemplateBinding to our simple ProjectRoleTemplateBinding struct
+            // if it fails, return an error
+            prtb.try_into().map_err(|e| {
+                println!("Failed to convert project role template binding: {:?}", e);
+                std::process::exit(1);
+            }).unwrap()
+        })
+        .collect::<Vec<prtb::ProjectRoleTemplateBinding>>();
+
+
+
         // fetch the projects for the cluster
-        let projects = project::get_projects(&configuration, &cluster.id).await.map_err(|e| {
+        let rancher_projects = project::get_projects(&configuration, &cluster.id).await.map_err(|e| {
             println!("Failed to get projects: {:?}", e);
             std::process::exit(1);
         }).unwrap();
         // convert the items to our simple struct for each object using the try_from method
-        let projects: Vec<Project> = projects
+        let projects: Vec<Project> = rancher_projects
             .items
             .into_iter()
             .map(|project| {
@@ -124,6 +181,7 @@ pub async fn download_current_configuration(configuration: Configuration, path: 
                 }).unwrap()
             })
             .collect::<Vec<project::Project>>();
+
 
         // Loop through the projects and save them to the folder
         for project in &projects {
@@ -143,19 +201,21 @@ pub async fn download_current_configuration(configuration: Configuration, path: 
                 std::process::exit(1);
             });
 
-            // pop the project path
+            // Loop through the project role template bindings and save them to the folder
+            for prtb in &prtbs {
+                // check if the project role template binding is for the current project
+                if prtb.project_name == project.id {
+                    // save the project role template binding to the project folder
+                    let prtb_file = project_path.join(format!("{}.{}", prtb.id, file_extension_from_format(&file_format)));
+                    let _ = std::fs::write(&prtb_file, serialize_object(prtb, &file_format)).map_err(|e| {
+                        println!("Failed to write file: {:?}", e);
+                        std::process::exit(1);
+                    });
+                }
+            }
         }
     }
-
-
-    // // Save the configuration to the folder
-    // // Save the clusters to the folder
-    // for cluster in clusters.items {
-    //     // 
-    // }
-
 }
-
 
 // serialize the object to the format specified
 pub fn serialize_object<T: serde::Serialize>(object: &T, file_format: &FileFormat) -> String {
@@ -164,11 +224,11 @@ pub fn serialize_object<T: serde::Serialize>(object: &T, file_format: &FileForma
             println!("Failed to serialize object: {:?}", e);
             std::process::exit(1);
         }).unwrap(),
-        FileFormat::Json => serde_json::to_string(object).map_err(|e| {
+        FileFormat::Json => serde_json::to_string_pretty(object).map_err(|e| {
             println!("Failed to serialize object: {:?}", e);
             std::process::exit(1);
         }).unwrap(),
-        FileFormat::Toml => toml::to_string(object).map_err(|e| {
+        FileFormat::Toml => toml::to_string_pretty(object).map_err(|e| {
             println!("Failed to serialize object: {:?}", e);
             std::process::exit(1);
         }).unwrap(),
@@ -188,7 +248,7 @@ pub fn deserialize_object<T: serde::de::DeserializeOwned>(object: &str, file_for
 
 pub fn file_format_from_extension(extension: &str) -> FileFormat {
     match extension {
-        "yaml" => FileFormat::Yaml,
+        "yml" => FileFormat::Yaml,
         "json" => FileFormat::Json,
         "toml" => FileFormat::Toml,
         _ => FileFormat::Json,
@@ -204,7 +264,7 @@ pub fn file_format_from_path(path: &PathBuf) -> FileFormat {
 
 pub fn file_extension_from_format(file_format: &FileFormat) -> String {
     match file_format {
-        FileFormat::Yaml => "yaml".to_string(),
+        FileFormat::Yaml => "yml".to_string(),
         FileFormat::Json => "json".to_string(),
         FileFormat::Toml => "toml".to_string(),
     }

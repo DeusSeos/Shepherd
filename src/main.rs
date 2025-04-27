@@ -26,7 +26,7 @@ async fn main() {
     let path = std::path::PathBuf::from("/tmp/rancher_config");
                         
     // Create a file format to save the configuration in
-    let file_format = FileFormat::Json;
+    let file_format = FileFormat::Yaml;
 
     // Download the current configuration from the Rancher API
     download_current_configuration(configuration, path, file_format).await

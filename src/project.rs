@@ -198,9 +198,10 @@ impl TryFrom<IoCattleManagementv3Project> for Project {
             .namespace_default_resource_quota
             .map(|b| *b);
 
-            let resource_quota_limit = spec
-            .resource_quota
-            .and_then(|b| b.limit.map(|b| *b));
+        let resource_quota_limit = spec
+        .resource_quota
+        .and_then(|b| b.limit.map(|b| *b));
+    
         
 
         Ok(Project {
