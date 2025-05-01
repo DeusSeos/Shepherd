@@ -3,8 +3,6 @@ use std::path::Path;
 use git2::{IndexAddOption, ProxyOptions, PushOptions, Repository, Signature};
 
 
-
-
 /// Initialize a local git repository in the folder
 ///
 /// # Arguments
@@ -15,7 +13,6 @@ use git2::{IndexAddOption, ProxyOptions, PushOptions, Repository, Signature};
 /// 
 /// * `Result<(), String>` - Result indicating success or failure
 ///
-
 pub fn init_and_commit_git_repo(folder_path: &Path, remote_url: &str) -> Result<(), String> {
     if !folder_path.exists() {
         return Err(format!("Folder does not exist: {}", folder_path.display()));
@@ -61,7 +58,14 @@ pub fn init_and_commit_git_repo(folder_path: &Path, remote_url: &str) -> Result<
 }
 
 
-
+/// Initialize a local git repository in the folder with main branch
+/// # Arguments
+/// * `folder_path` - Folder path to initialize the git repository
+/// * `remote_url` - Remote URL to set up
+/// 
+/// # Returns
+/// * `Result<(), String>` - Result indicating success or failure
+/// 
 pub fn init_git_repo_with_main_branch(folder_path: &Path, remote_url: &str) -> Result<(), String> {
     if !folder_path.exists() {
         return Err(format!("Folder does not exist: {}", folder_path.display()));
@@ -108,7 +112,14 @@ pub fn init_git_repo_with_main_branch(folder_path: &Path, remote_url: &str) -> R
 }
 
 
-// push repo to remote
+/// push repo to remote
+/// # Arguments
+/// * `folder_path` - Folder path to the git repository
+/// * `remote_url` - Remote URL to push to
+/// 
+/// # Returns
+/// * `Result<(), String>` - Result indicating success or failure
+/// 
 pub fn push_repo_to_remote(folder_path: &Path, remote_url: &str) -> Result<(), String> {
     if !folder_path.exists() {
         return Err(format!("Folder does not exist: {}", folder_path.display()));
@@ -166,4 +177,48 @@ pub fn push_repo_to_remote(folder_path: &Path, remote_url: &str) -> Result<(), S
     println!("Push completed successfully.");
     Ok(())
 
+}
+
+
+/// Commit changes to the local git repository
+/// # Arguments
+/// * `folder_path` - Folder path to the git repository
+/// * `message` - Commit message
+/// 
+/// # Returns
+/// * `Result<(), String>` - Result indicating success or failure
+/// 
+pub fn commit_changes(folder_path: &Path, message: &str) -> Result<(), String> {
+    if !folder_path.exists() {
+        return Err(format!("Folder does not exist: {}", folder_path.display()));
+    }
+    if !folder_path.is_dir() {
+        return Err(format!("Path is not a directory: {}", folder_path.display()));
+    }
+    if Repository::discover(folder_path).is_ok() {
+        return Err(format!("Folder is already a git repository: {}", folder_path.display()));
+    }
+
+    let repo = Repository::open(folder_path).map_err(|e| format!("Failed to open repository: {}", e))?;
+
+    let mut index = repo.index().map_err(|e| format!("Failed to get index: {}", e))?;
+    index.add_all(["*"], IndexAddOption::FORCE, None).map_err(|e| format!("Failed to add files to index: {}", e))?;
+    index.write().map_err(|e| format!("Failed to write index: {}", e))?;
+
+    let tree_oid = index.write_tree().map_err(|e| format!("Failed to write tree: {}", e))?;
+    let tree = repo.find_tree(tree_oid).map_err(|e| format!("Failed to find tree: {}", e))?;
+
+    let sig = repo.signature().or_else(|_| {
+        Signature::now("GitOps Bot", "gitops@example.com")
+    }).map_err(|e| format!("Failed to create signature: {}", e))?;
+    let commit_oid = repo.commit(
+        Some("HEAD"),
+        &sig,
+        &sig,
+        message,
+        &tree,
+        &[],
+    ).map_err(|e| format!("Failed to create commit: {}", e))?;
+    println!("Created commit with id: {}", commit_oid);
+    Ok(())
 }

@@ -98,11 +98,11 @@ pub async fn get_project_role_template_bindings(
 /// * `Error<ListManagementCattleIoV3ProjectRoleTemplateBindingForAllNamespacesError>` - The error that occurred while trying to get the bindings
 pub async fn get_namespaced_project_role_template_bindings(
     configuration: &Configuration,
-    cluster_id: &str,
+    project_id: &str,
 ) -> Result<IoCattleManagementv3ProjectRoleTemplateBindingList, Error<ListManagementCattleIoV3NamespacedProjectRoleTemplateBindingError>> {
     let result = list_management_cattle_io_v3_namespaced_project_role_template_binding(
         configuration,
-        cluster_id,
+        project_id,
         None,
         None,
         None,
@@ -152,7 +152,7 @@ pub async fn get_namespaced_project_role_template_bindings(
 
 
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ProjectRoleTemplateBinding {
     /// The name of the project role template binding (typically the Kubernetes metadata.name).
     pub id: String,

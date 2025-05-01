@@ -42,7 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_git_repo_with_main_branch(&path, &remote_url).unwrap();
 
     // push the repo to the remote
-    push_repo_to_remote(&path, &remote_url).unwrap();
+    // push_repo_to_remote(&path, &remote_url).unwrap();
 
     Ok(())
 

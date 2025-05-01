@@ -141,27 +141,6 @@ pub async fn download_current_configuration(configuration: Configuration, path: 
             std::process::exit(1);
         });
 
-        let rancher_project_role_template_bindings = prtb::get_namespaced_project_role_template_bindings(&configuration, &cluster.id).await.map_err(|e| {
-            println!("Failed to get project role template bindings: {:?}", e);
-            std::process::exit(1);
-        }).unwrap();
-    
-        
-        // TODO: convert the conversion to a generic function
-        let prtbs: Vec<ProjectRoleTemplateBinding> = rancher_project_role_template_bindings
-        .items
-        .into_iter()
-        .map(|prtb| {
-            // try to convert the IoCattleManagementV3ProjectRoleTemplateBinding to our simple ProjectRoleTemplateBinding struct
-            // if it fails, return an error
-            prtb.try_into().map_err(|e| {
-                println!("Failed to convert project role template binding: {:?}", e);
-                std::process::exit(1);
-            }).unwrap()
-        })
-        .collect::<Vec<prtb::ProjectRoleTemplateBinding>>();
-
-
 
         // fetch the projects for the cluster
         let rancher_projects = project::get_projects(&configuration, &cluster.id).await.map_err(|e| {
@@ -201,17 +180,37 @@ pub async fn download_current_configuration(configuration: Configuration, path: 
                 std::process::exit(1);
             });
 
+
+            let rancher_project_role_template_bindings = prtb::get_namespaced_project_role_template_bindings(&configuration, &project.id).await.map_err(|e| {
+                println!("Failed to get project role template bindings: {:?}", e);
+                std::process::exit(1);
+            }).unwrap();
+        
+            
+            // TODO: convert the conversion to a generic function
+            let prtbs: Vec<ProjectRoleTemplateBinding> = rancher_project_role_template_bindings
+            .items
+            .into_iter()
+            .map(|prtb| {
+                // try to convert the IoCattleManagementV3ProjectRoleTemplateBinding to our simple ProjectRoleTemplateBinding struct
+                // if it fails, return an error
+                prtb.try_into().map_err(|e| {
+                    println!("Failed to convert project role template binding: {:?}", e);
+                    std::process::exit(1);
+                }).unwrap()
+            })
+            .collect::<Vec<prtb::ProjectRoleTemplateBinding>>();
+            
+            println!("Project Role Template Bindings: {:?}", prtbs);
+
             // Loop through the project role template bindings and save them to the folder
             for prtb in &prtbs {
-                // check if the project role template binding is for the current project
-                if prtb.project_name == project.id {
-                    // save the project role template binding to the project folder
-                    let prtb_file = project_path.join(format!("{}.{}", prtb.id, file_extension_from_format(&file_format)));
-                    let _ = std::fs::write(&prtb_file, serialize_object(prtb, &file_format)).map_err(|e| {
-                        println!("Failed to write file: {:?}", e);
-                        std::process::exit(1);
-                    });
-                }
+                // save the project role template binding to the project folder
+                let prtb_file = project_path.join(format!("{}.{}", prtb.id, file_extension_from_format(&file_format)));
+                let _ = std::fs::write(&prtb_file, serialize_object(prtb, &file_format)).map_err(|e| {
+                    println!("Failed to write file: {:?}", e);
+                    std::process::exit(1);
+                });
             }
         }
     }
