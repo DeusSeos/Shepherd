@@ -1,8 +1,7 @@
 use std::path::Path;
 
-use git2::{Error, IndexAddOption, Oid, ProxyOptions, PushOptions, Repository, Signature};
+use git2::{IndexAddOption, ProxyOptions, PushOptions, Repository, Signature};
 
-use crate::FileFormat;
 
 
 

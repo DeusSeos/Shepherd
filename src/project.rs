@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use rancher_client::{
-    apis::{configuration::Configuration, Error, ResponseContent},
-    models::IoK8sApimachineryPkgApisMetaV1ObjectMeta,
-};
+use rancher_client::apis::{configuration::Configuration, Error, ResponseContent};
 use reqwest::StatusCode;
 
 use rancher_client::{
@@ -13,7 +10,6 @@ use rancher_client::{
     },
     models::{
         IoCattleManagementv3Project, IoCattleManagementv3ProjectList,
-        IoCattleManagementv3ProjectSpec,
         IoCattleManagementv3ProjectSpecContainerDefaultResourceLimit,
         IoCattleManagementv3ProjectSpecNamespaceDefaultResourceQuota,
         IoCattleManagementv3ProjectSpecResourceQuotaLimit,

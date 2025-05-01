@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use cluster::Cluster;
 use project::Project;
 use prtb::ProjectRoleTemplateBinding;
-use rancher_client::{apis::configuration::{ApiKey, Configuration}, models::IoCattleManagementv3Cluster};
+use rancher_client::apis::configuration::{ApiKey, Configuration};
 
 pub fn rancher_config_init(host: &str, token: &str) -> Configuration {
     let mut config = Configuration::new();
