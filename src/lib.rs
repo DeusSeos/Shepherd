@@ -3,6 +3,7 @@ pub mod cluster;
 pub mod project;
 pub mod rt;
 pub mod prtb;
+pub mod git;
 
 use std::path::PathBuf;
 
@@ -19,7 +20,6 @@ pub fn rancher_config_init(host: &str, token: &str) -> Configuration {
         prefix: Some("Bearer".to_string()),
         key: token.to_string(),
     });
-
     config
 }
 
@@ -52,7 +52,7 @@ pub fn rancher_config_init(host: &str, token: &str) -> Configuration {
 // the folder will be created if it does not exist
 // the function will return the path to the folder
 
-pub async fn download_current_configuration(configuration: Configuration, path: PathBuf, file_format: FileFormat) {
+pub async fn download_current_configuration(configuration: Configuration, path: &PathBuf, file_format: FileFormat) {
     // Get the current configuration from the Rancher API
     let rancher_cluster = cluster::get_clusters(&configuration).await.map_err(|e| {
         println!("Failed to get clusters: {:?}", e);

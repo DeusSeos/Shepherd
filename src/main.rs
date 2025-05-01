@@ -1,14 +1,14 @@
 
-use std::ops::Deref;
-use std::path::Path;
 
+
+use rancher_cac::git::push_repo_to_remote;
+use rancher_cac::git::init_git_repo_with_main_branch;
 use rancher_cac::rancher_config_init;
 use rancher_cac::download_current_configuration;
 use rancher_cac::FileFormat;
 
 use reqwest_middleware::ClientBuilder;
 
-use git2::{Cred, PushOptions, RemoteCallbacks, ProxyOptions, Repository};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -34,73 +34,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let file_format = FileFormat::Yaml;
 
     // Download the current configuration from the Rancher API
-    download_current_configuration(configuration, path, file_format).await;
+    download_current_configuration(configuration, &path, file_format).await;
 
-    // initialize a git repository in the folder
-    let repo = Repository::init("/tmp/rancher_config").unwrap();
+    // set up the remote url to be git@github.com/DeusSeos/rancher_config.git
+    let remote_url = "git@github.com:DeusSeos/rancher_config.git";
 
-    // commit the changes
-    let mut index = repo.index().unwrap();
-    index.add_all(["*"], git2::IndexAddOption::DEFAULT, None).unwrap();
-    let oid = index.write().unwrap();
-    let signature = repo.signature().unwrap();
-    let tree_oid = index.write_tree().unwrap();
-    let tree = repo.find_tree(tree_oid).unwrap();
-    let commit_oid = repo.commit(
-        Some("HEAD"),
-        &signature,
-        &signature,
-        "Initial commit",
-        &tree,
-        &[],
-    ).unwrap();
-    println!("Created commit with id: {}", commit_oid);
+    init_git_repo_with_main_branch(&path, &remote_url).unwrap();
 
-    // set up the remote repository to be https://github.com/DeusSeos/rancher_config.git and then push the changes
-    repo.remote("origin", "git@github.com:DeusSeos/rancher_config.git").unwrap();
-
-    // Setup RemoteCallbacks
-    let mut remote_callbacks = RemoteCallbacks::new();
-    remote_callbacks
-        .credentials(|_url, username_from_url, _allowed_types| {
-            let username = username_from_url.unwrap_or("git");
-            let private_key = Path::new("/Users/dc/.ssh/rancher_config");
-            Cred::ssh_key(username, None, private_key, None)
-        })
-        .transfer_progress(|progress| {
-            println!(
-                "Transferred {} bytes out of {} bytes",
-                progress.received_bytes(),
-                progress.total_objects()
-            );
-            true
-        })
-        .update_tips(|refname, old_oid, new_oid| {
-            println!("Updated reference {} from {} to {}", refname, old_oid, new_oid);
-            true
-        });
-
-    // Setup ProxyOptions
-    let mut proxy_options = ProxyOptions::new();
-    proxy_options.auto();
-
-    // Setup PushOptions
-    let mut push_options = PushOptions::new();
-    push_options.remote_callbacks(remote_callbacks);
-    push_options.proxy_options(proxy_options);
-
-    // Find remote
-    let mut remote = repo.find_remote("origin")
-        .map_err(|e| format!("Failed to find remote 'origin': {}", e))?;
-
-    // Perform push
-    remote.push(
-        &["refs/heads/master:refs/heads/master"],
-        Some(&mut push_options),
-    ).map_err(|e| format!("Failed to push to remote: {}", e))?;
-
-    println!("Push completed successfully.");
-    //
+    // push the repo to the remote
+    push_repo_to_remote(&path, &remote_url).unwrap();
 
     Ok(())
 
