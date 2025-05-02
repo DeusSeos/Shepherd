@@ -79,7 +79,7 @@ pub async fn get_clusters(
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Cluster {
     pub id: String,
     pub display_name: String,

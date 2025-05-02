@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use rancher_client::apis::{configuration::Configuration, Error, ResponseContent};
+use rancher_client::apis::{configuration::Configuration, management_cattle_io_v3_api::{read_management_cattle_io_v3_namespaced_project, ReadManagementCattleIoV3NamespacedProjectError}, Error, ResponseContent};
 use reqwest::StatusCode;
 
 use rancher_client::{
@@ -84,7 +84,71 @@ pub async fn get_projects(
     }
 }
 
-#[derive(Serialize, Deserialize)]
+
+
+/// Get a project by its ID
+/// 
+/// # Arguments
+/// 
+/// * `configuration` - The configuration to use for the request
+/// * `cluster_id` - The ID of the cluster (namespace) to get the project for
+/// * `project_id` - The ID of the project to get
+/// # Returns
+/// 
+/// * `IoCattleManagementv3Project` - The project
+/// # Errors
+/// 
+/// * `Error<ListManagementCattleIoV3NamespacedProjectError>` - The error that occurred while trying to get the project
+/// 
+pub async fn get_project(
+    configuration: &Configuration,
+    cluster_id: &str,
+    project_id: &str,
+) -> Result<IoCattleManagementv3Project, Error<ReadManagementCattleIoV3NamespacedProjectError>> {
+    let result = read_management_cattle_io_v3_namespaced_project(
+        configuration,
+        project_id,
+        cluster_id,
+        None,
+        None,
+    )
+    .await;
+
+    match result {
+        Err(e) => Err(e),
+        Ok(response_content) => {
+            // Match on the status code and deserialize accordingly
+            match response_content.status {
+                StatusCode::OK => {
+                    // Try to deserialize the content into IoCattleManagementv3Project (Status200 case)
+                    match serde_json::from_str(&response_content.content) {
+                        Ok(data) => Ok(data),
+                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
+                    }
+                }
+                _ => {
+                    // If not status 200, treat as UnknownValue
+                    match serde_json::from_str::<serde_json::Value>(&response_content.content) {
+                        Ok(unknown_data) => Err(Error::ResponseError(ResponseContent {
+                            status: response_content.status,
+                            content: response_content.content,
+                            entity: Some(
+                                ReadManagementCattleIoV3NamespacedProjectError::UnknownValue(
+                                    unknown_data,
+                                ),
+                            ),
+                        })),
+                        Err(unknown_deserialize_err) => Err(Error::Serde(unknown_deserialize_err)),
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Project {
     /// Name of the Kubernetes cluster this project belongs to.
     pub cluster_name: String,

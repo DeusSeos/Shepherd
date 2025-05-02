@@ -81,7 +81,7 @@ pub async fn get_role_templates(
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct RoleTemplate {
     pub builtin: bool,
     pub cluster_creator_default: bool,
