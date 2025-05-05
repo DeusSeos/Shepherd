@@ -1,3 +1,4 @@
+use git2::AnnotatedCommit;
 use serde::{Deserialize, Serialize};
 
 use rancher_client::apis::{configuration::Configuration, management_cattle_io_v3_api::{read_management_cattle_io_v3_namespaced_project, ReadManagementCattleIoV3NamespacedProjectError}, Error, ResponseContent};
@@ -159,6 +160,15 @@ pub struct Project {
     /// Human-readable description of the project.
     pub description: String,
 
+    // annotations: Option<std::collections::HashMap<String, String>>,
+    /// Annotations applied to the project.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<std::collections::HashMap<String, String>>,
+
+    /// Labels applied to the project.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub labels: Option<std::collections::HashMap<String, String>>,
+
     /// Default container resource limits applied within the project namespaces.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub container_default_resource_limit:
@@ -180,22 +190,26 @@ pub struct Project {
 
 impl Project {
     pub fn new(
+        annotations: Option<std::collections::HashMap<String, String>>,
         cluster_name: String,
-        id: String,
-        display_name: String,
-        description: String,
         container_default_resource_limit: Option<IoCattleManagementv3ProjectSpecContainerDefaultResourceLimit>,
+        description: String,
+        display_name: String,
         enable_project_monitoring: bool,
+        id: String,
+        labels: Option<std::collections::HashMap<String, String>>,
         namespace_default_resource_quota: Option<IoCattleManagementv3ProjectSpecNamespaceDefaultResourceQuota>,
         resource_quota: Option<IoCattleManagementv3ProjectSpecResourceQuotaLimit>,
     ) -> Self {
         Project {
+            annotations,
             cluster_name,
-            id,
-            display_name,
-            description,
             container_default_resource_limit,
+            description,
+            display_name,
             enable_project_monitoring,
+            id,
+            labels,
             namespace_default_resource_quota,
             resource_quota,
         }
@@ -261,50 +275,20 @@ impl TryFrom<IoCattleManagementv3Project> for Project {
         let resource_quota_limit = spec
         .resource_quota
         .and_then(|b| b.limit.map(|b| *b));
-    
+
         
 
         Ok(Project {
+            annotations: metadata.annotations,
+            labels: metadata.labels,
             cluster_name: spec.cluster_name,
-            id: metadata.name.ok_or("missing metadata.name")?,
-            description: spec.description.unwrap_or_default(),
             container_default_resource_limit,
+            description: spec.description.unwrap_or_default(),
             display_name: spec.display_name,
             enable_project_monitoring: spec.enable_project_monitoring.unwrap_or(false),
+            id: metadata.name.ok_or("missing metadata.name")?,
             namespace_default_resource_quota,
             resource_quota: resource_quota_limit,
         })
     }
 }
-
-// impl TryFrom<IoCattleManagementv3Project> for Project {
-//     type Error = &'static str;
-
-//     fn try_from(value: IoCattleManagementv3Project) -> Result<Self, Self::Error> {
-//         let metadata = value.metadata.ok_or("missing metadata")?;
-//         let spec = value.spec.ok_or("missing spec")?;
-
-//         let container_default_resource_limit = spec
-//             .container_default_resource_limit
-//             .map(|b| *b);
-
-//         let namespace_default_resource_quota = spec
-//             .namespace_default_resource_quota
-//             .map(|b| *b);
-
-//         let resource_quota = spec
-//             .resource_quota
-//             .and_then(|b| b.limit.map(|limit| *limit));
-
-//         Project::new(
-//             spec.cluster_name,
-//             metadata.name.ok_or("missing metadata.name")?,
-//             spec.display_name,
-//             spec.description.unwrap_or_default(),
-//             container_default_resource_limit,
-//             spec.enable_project_monitoring.unwrap_or(false),
-//             namespace_default_resource_quota,
-//             resource_quota,
-//         ).into()
-//     }
-// }
