@@ -52,13 +52,13 @@ pub fn rancher_config_init(host: &str, token: &str) -> Configuration {
 // the folder will be created if it does not exist
 // the function will return the path to the folder
 
-pub async fn download_current_configuration(configuration: Configuration, path: &PathBuf, file_format: FileFormat) {
+pub async fn download_current_configuration(configuration: &Configuration, path: &PathBuf, file_format: FileFormat) {
     // Get the current configuration from the Rancher API
-    let rancher_cluster = cluster::get_clusters(&configuration).await.map_err(|e| {
+    let rancher_cluster = cluster::get_clusters(configuration).await.map_err(|e| {
         println!("Failed to get clusters: {:?}", e);
         std::process::exit(1);
     }).unwrap();
-    let rancher_role_templates = rt::get_role_templates(&configuration).await.map_err(|e| {
+    let rancher_role_templates = rt::get_role_templates(configuration).await.map_err(|e| {
         println!("Failed to get role templates: {:?}", e);
         std::process::exit(1);
     }).unwrap();
@@ -143,7 +143,7 @@ pub async fn download_current_configuration(configuration: Configuration, path: 
 
 
         // fetch the projects for the cluster
-        let rancher_projects = project::get_projects(&configuration, &cluster.id).await.map_err(|e| {
+        let rancher_projects = project::get_projects(configuration, &cluster.id).await.map_err(|e| {
             println!("Failed to get projects: {:?}", e);
             std::process::exit(1);
         }).unwrap();
@@ -181,7 +181,7 @@ pub async fn download_current_configuration(configuration: Configuration, path: 
             });
 
 
-            let rancher_project_role_template_bindings = prtb::get_namespaced_project_role_template_bindings(&configuration, &project.id).await.map_err(|e| {
+            let rancher_project_role_template_bindings = prtb::get_namespaced_project_role_template_bindings(configuration, &project.id).await.map_err(|e| {
                 println!("Failed to get project role template bindings: {:?}", e);
                 std::process::exit(1);
             }).unwrap();
@@ -200,8 +200,6 @@ pub async fn download_current_configuration(configuration: Configuration, path: 
                 }).unwrap()
             })
             .collect::<Vec<prtb::ProjectRoleTemplateBinding>>();
-            
-            println!("Project Role Template Bindings: {:?}", prtbs);
 
             // Loop through the project role template bindings and save them to the folder
             for prtb in &prtbs {
@@ -215,6 +213,45 @@ pub async fn download_current_configuration(configuration: Configuration, path: 
         }
     }
 }
+
+
+/// load a specific project configuration from the base path
+/// 
+/// # Arguments
+/// `base_path`: The base path to load the project from
+/// `cluster_id`: The cluster ID to load the project from
+/// `project_id`: The project ID to load the project from
+/// `file_format`: The file format to load the project from
+/// 
+/// # Returns
+/// `Project`: The project object
+///
+pub fn load_project(base_path: &PathBuf, endpoint_url: &str, cluster_id: &str, project_id: &str, file_format: FileFormat) -> Project {
+    // create the path to the project
+    let project_path = base_path.join(endpoint_url.replace("https://", "").replace("/", "_")).join(cluster_id).join(project_id);
+    // check if the path exists
+    if !project_path.exists() {
+        println!("Project path does not exist");
+        std::process::exit(1);
+    }
+    // read the file from the path
+    let project_file = project_path.join(format!("{}.{}", project_id, file_extension_from_format(&file_format)));
+    // check if the file exists
+    if !project_file.exists() {
+        println!("Project file does not exist");
+        std::process::exit(1);
+    }
+    // read the file and deserialize it
+    let project_file_content = std::fs::read_to_string(&project_file).map_err(|e| {
+        println!("Failed to read file: {:?}", e);
+        std::process::exit(1);
+    }).unwrap();
+    
+    deserialize_object(&project_file_content, file_format)
+}
+
+
+
 
 // serialize the object to the format specified
 pub fn serialize_object<T: serde::Serialize>(object: &T, file_format: &FileFormat) -> String {
@@ -235,7 +272,12 @@ pub fn serialize_object<T: serde::Serialize>(object: &T, file_format: &FileForma
 }
 
 
-// deserialize the object from the format specified
+// deserialize the project from the format specified
+/// 
+/// # Arguments
+/// FileFormat: The format of the file to be deserialized
+/// object: The object to be deserialized
+
 pub fn deserialize_object<T: serde::de::DeserializeOwned>(object: &str, file_format: FileFormat) -> T {
     match file_format {
         FileFormat::Yaml => serde_yaml::from_str(object).unwrap(),

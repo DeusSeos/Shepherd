@@ -1,7 +1,7 @@
 use git2::AnnotatedCommit;
 use serde::{Deserialize, Serialize};
 
-use rancher_client::apis::{configuration::Configuration, management_cattle_io_v3_api::{read_management_cattle_io_v3_namespaced_project, ReadManagementCattleIoV3NamespacedProjectError}, Error, ResponseContent};
+use rancher_client::{apis::{configuration::Configuration, management_cattle_io_v3_api::{read_management_cattle_io_v3_namespaced_project, ReadManagementCattleIoV3NamespacedProjectError}, Error, ResponseContent}, models::{self, IoCattleManagementv3ProjectSpec, IoK8sApimachineryPkgApisMetaV1ObjectMeta}};
 use reqwest::StatusCode;
 
 use rancher_client::{
@@ -289,6 +289,46 @@ impl TryFrom<IoCattleManagementv3Project> for Project {
             id: metadata.name.ok_or("missing metadata.name")?,
             namespace_default_resource_quota,
             resource_quota: resource_quota_limit,
+        })
+    }
+}
+
+
+impl TryFrom<Project> for IoCattleManagementv3Project {
+    type Error = &'static str;
+
+    fn try_from(value: Project) -> Result<Self, Self::Error> {
+        // Construct metadata
+        let metadata = IoK8sApimachineryPkgApisMetaV1ObjectMeta {
+            name: Some(value.id.clone()),
+            annotations: value.annotations.clone(),
+            labels: value.labels.clone(),
+            ..Default::default()
+        };
+
+        // Construct spec
+        let spec = IoCattleManagementv3ProjectSpec {
+            cluster_name: value.cluster_name.clone(),
+            description: Some(value.description.clone()),
+            display_name: value.display_name.clone(),
+            enable_project_monitoring: Some(value.enable_project_monitoring),
+            container_default_resource_limit: value.container_default_resource_limit.clone().map(Box::new),
+            namespace_default_resource_quota: value.namespace_default_resource_quota.clone().map(Box::new),
+            resource_quota: value.resource_quota.clone().map(|rq| {
+                Box::new(models::IoCattleManagementv3ProjectSpecResourceQuota {
+                    limit: Some(Box::new(rq)),
+                    ..Default::default()
+                })
+            }),
+            ..Default::default()
+        };
+
+        Ok(IoCattleManagementv3Project {
+            api_version: Some("management.cattle.io/v3".to_string()),
+            kind: Some("Project".to_string()),
+            metadata: Some(Box::new(metadata)),
+            spec: Some(Box::new(spec)),
+            status: None,
         })
     }
 }
