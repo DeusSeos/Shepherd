@@ -253,22 +253,25 @@ impl PartialEq<RoleTemplate> for IoCattleManagementv3RoleTemplate {
 
 impl PartialEq<IoCattleManagementv3RoleTemplate> for RoleTemplate {
     fn eq(&self, other: &IoCattleManagementv3RoleTemplate) -> bool {
-        let lhs = Some(self.id.clone());
-        let rhs = other.metadata.as_ref().and_then(|m| m.name.clone());
+        // let lhs = Some(self.id.clone());
+        // let rhs = other.metadata.as_ref().and_then(|m| m.name.clone());
 
-        self.administrative == other.administrative
-            && self.builtin == other.builtin
-            && self.cluster_creator_default == other.cluster_creator_default
-            && self.context == other.context
-            && self.description == other.description
-            && self.display_name == other.display_name
-            && self.external == other.external
-            && self.hidden == other.hidden
-            && self.locked == other.locked
-            && lhs == rhs
-            && self.project_creator_default == other.project_creator_default
-            && self.role_template_names == other.role_template_names
-            && self.rules == other.rules
+        // self.administrative == other.administrative
+        //     && self.builtin == other.builtin
+        //     && self.cluster_creator_default == other.cluster_creator_default
+        //     && self.context == other.context
+        //     && self.description == other.description
+        //     && self.display_name == other.display_name
+        //     && self.external == other.external
+        //     && self.hidden == other.hidden
+        //     && self.locked == other.locked
+        //     && lhs == rhs
+        //     && self.project_creator_default == other.project_creator_default
+        //     && self.role_template_names == other.role_template_names
+        //     && self.rules == other.rules
+
+
+        other == self
     }
 }
 

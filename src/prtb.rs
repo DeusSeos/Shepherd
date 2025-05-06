@@ -274,17 +274,19 @@ impl PartialEq<ProjectRoleTemplateBinding> for IoCattleManagementv3ProjectRoleTe
 
 impl PartialEq<IoCattleManagementv3ProjectRoleTemplateBinding> for ProjectRoleTemplateBinding {
     fn eq(&self, other: &IoCattleManagementv3ProjectRoleTemplateBinding) -> bool {
-        let lhs = Some(self.id.clone());
-        let rhs = other.metadata.as_ref().and_then(|m| m.name.clone());
+        // let lhs = Some(self.id.clone());
+        // let rhs = other.metadata.as_ref().and_then(|m| m.name.clone());
 
-        lhs == rhs
-            && self.group_name == other.group_name
-            && self.group_principal_name == other.group_principal_name
-            && self.project_name == other.project_name
-            && self.role_template_name == other.role_template_name
-            && self.service_account == other.service_account
-            && self.user_name == other.user_name
-            && self.user_principal_name == other.user_principal_name
+        // lhs == rhs
+        //     && self.group_name == other.group_name
+        //     && self.group_principal_name == other.group_principal_name
+        //     && self.project_name == other.project_name
+        //     && self.role_template_name == other.role_template_name
+        //     && self.service_account == other.service_account
+        //     && self.user_name == other.user_name
+        //     && self.user_principal_name == other.user_principal_name
+
+        other == self
     }
 }
 
