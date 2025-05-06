@@ -1,4 +1,5 @@
 /rancher_client_crate
+.cargo/
 Cargo.lock
 
 
