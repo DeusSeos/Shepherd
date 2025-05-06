@@ -1,4 +1,4 @@
-
+#[allow(unused_imports)]
 
 
 use rancher_cac::git::push_repo_to_remote;
