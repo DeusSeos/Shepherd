@@ -7,12 +7,11 @@ use rancher_client::{
     apis::management_cattle_io_v3_api::{
         list_management_cattle_io_v3_role_template, ListManagementCattleIoV3RoleTemplateError,
     },
-    models::{
-        IoCattleManagementv3RoleTemplate, IoCattleManagementv3RoleTemplateList,
-        IoCattleManagementv3GlobalRoleRulesInner,
-         IoK8sApimachineryPkgApisMetaV1ObjectMeta,
-    },
     models::io_cattle_managementv3_role_template::Context,
+    models::{
+        IoCattleManagementv3GlobalRoleRulesInner, IoCattleManagementv3RoleTemplate,
+        IoCattleManagementv3RoleTemplateList, IoK8sApimachineryPkgApisMetaV1ObjectMeta,
+    },
 };
 
 /// Get all role templates from an endpoint using the provided configuration
@@ -31,7 +30,8 @@ use rancher_client::{
 ///
 pub async fn get_role_templates(
     configuration: &Configuration,
-) -> Result<IoCattleManagementv3RoleTemplateList, Error<ListManagementCattleIoV3RoleTemplateError>> {
+) -> Result<IoCattleManagementv3RoleTemplateList, Error<ListManagementCattleIoV3RoleTemplateError>>
+{
     let result = list_management_cattle_io_v3_role_template(
         configuration,
         None,
@@ -68,9 +68,11 @@ pub async fn get_role_templates(
                             Err(Error::ResponseError(ResponseContent {
                                 status: response_content.status,
                                 content: response_content.content,
-                                entity: Some(ListManagementCattleIoV3RoleTemplateError::UnknownValue(
-                                    unknown_data,
-                                )),
+                                entity: Some(
+                                    ListManagementCattleIoV3RoleTemplateError::UnknownValue(
+                                        unknown_data,
+                                    ),
+                                ),
                             }))
                         }
                         Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
@@ -83,36 +85,54 @@ pub async fn get_role_templates(
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct RoleTemplate {
-    pub builtin: bool,
-    pub cluster_creator_default: bool,
-    pub context: String,
-    pub description: String,
-    pub display_name: String,
-    pub external: bool,
-    pub hidden: bool,
-    pub locked: bool,
+    /// Administrative if true, this RoleTemplate is used to grant administrative privileges. Default to false.
+    /// This field is not set in the API, but is used to determine if the role template is administrative
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub administrative: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub builtin: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cluster_creator_default: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<Context>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hidden: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub locked: Option<bool>,
     pub id: String,
-    pub project_creator_default: bool,
-    pub role_template_names: Vec<String>,
-    pub rules: Vec<IoCattleManagementv3GlobalRoleRulesInner>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_creator_default: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role_template_names: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rules: Option<Vec<IoCattleManagementv3GlobalRoleRulesInner>>,
 }
 
 impl RoleTemplate {
     pub fn new(
-        builtin: bool,
-        cluster_creator_default: bool,
-        context: String,
-        description: String,
-        display_name: String,
-        external: bool,
-        hidden: bool,
-        locked: bool,
+        administrative: Option<bool>,
+
+        builtin: Option<bool>,
+        cluster_creator_default: Option<bool>,
+        context: Option<Context>,
+        description: Option<String>,
+        display_name: Option<String>,
+        external: Option<bool>,
+        hidden: Option<bool>,
+        locked: Option<bool>,
         id: String,
-        project_creator_default: bool,
-        role_template_names: Vec<String>,
-        rules: Vec<IoCattleManagementv3GlobalRoleRulesInner>,
-    ) -> RoleTemplate {
+        project_creator_default: Option<bool>,
+        role_template_names: Option<Vec<String>>,
+        rules: Option<Vec<IoCattleManagementv3GlobalRoleRulesInner>>,
+    ) -> Self {
         RoleTemplate {
+            administrative,
             builtin,
             cluster_creator_default,
             context,
@@ -135,29 +155,25 @@ impl TryFrom<IoCattleManagementv3RoleTemplate> for RoleTemplate {
     fn try_from(value: IoCattleManagementv3RoleTemplate) -> Result<Self, Self::Error> {
         let metadata: IoK8sApimachineryPkgApisMetaV1ObjectMeta =
             *value.metadata.ok_or("missing metadata")?;
-        
-        let context_str = match value.context {
-            Some(Context::Project) => "project",
-            Some(Context::Cluster) => "cluster",
-            Some(Context::Empty) => "",
-            None => return Err("missing context"),
-        }.to_string();
 
-        let rules: Vec<IoCattleManagementv3GlobalRoleRulesInner> = value.rules.unwrap_or_default();
-        let role_template_names: Vec<String> = value.role_template_names.unwrap_or_default();
-        let builtin: bool = value.builtin.unwrap_or(false);
-        let cluster_creator_default: bool = value.cluster_creator_default.unwrap_or(false);
-        let description: String = value.description.unwrap_or_default();
-        let display_name: String = value.display_name.unwrap_or_default();
-        let external: bool = value.external.unwrap_or(false);
-        let hidden: bool = value.hidden.unwrap_or(false);
-        let locked: bool = value.locked.unwrap_or(false);
-        let project_creator_default: bool = value.project_creator_default.unwrap_or(false);
+        let context = value.context;
+        let administrative: Option<bool> = value.administrative;
+        let builtin: Option<bool> = value.builtin;
+        let cluster_creator_default: Option<bool> = value.cluster_creator_default;
+        let description: Option<String> = value.description;
+        let display_name: Option<String> = value.display_name;
+        let external: Option<bool> = value.external;
+        let hidden: Option<bool> = value.hidden;
+        let locked: Option<bool> = value.locked;
+        let project_creator_default: Option<bool> = value.project_creator_default;
+        let role_template_names: Option<Vec<String>> = value.role_template_names;
+        let rules: Option<Vec<IoCattleManagementv3GlobalRoleRulesInner>> = value.rules;
 
         Ok(RoleTemplate {
+            administrative,
             builtin,
             cluster_creator_default,
-            context: context_str,
+            context,
             description,
             display_name,
             external,
@@ -171,3 +187,231 @@ impl TryFrom<IoCattleManagementv3RoleTemplate> for RoleTemplate {
     }
 }
 
+impl TryFrom<RoleTemplate> for IoCattleManagementv3RoleTemplate {
+    type Error = &'static str;
+
+    fn try_from(value: RoleTemplate) -> Result<Self, Self::Error> {
+        let metadata = IoK8sApimachineryPkgApisMetaV1ObjectMeta {
+            name: Some(value.id.clone()),
+            ..Default::default()
+        };
+
+        let context = value.context;
+        let administrative: Option<bool> = value.administrative;
+        let builtin: Option<bool> = value.builtin;
+        let cluster_creator_default: Option<bool> = value.cluster_creator_default;
+        let description: Option<String> = value.description;
+        let display_name: Option<String> = value.display_name;
+        let external: Option<bool> = value.external;
+        let hidden: Option<bool> = value.hidden;
+        let locked: Option<bool> = value.locked;
+        let project_creator_default: Option<bool> = value.project_creator_default;
+        let role_template_names: Option<Vec<String>> = value.role_template_names;
+        let rules: Option<Vec<IoCattleManagementv3GlobalRoleRulesInner>> = value.rules;
+
+        Ok(IoCattleManagementv3RoleTemplate {
+            administrative,
+            api_version: Some("management.cattle.io/v3".to_string()),
+            builtin,
+            cluster_creator_default,
+            context,
+            description,
+            display_name,
+            external,
+            hidden,
+            kind: Some("RoleTemplate".to_string()),
+            locked,
+            metadata: Some(Box::new(metadata)),
+            project_creator_default,
+            role_template_names,
+            rules,
+        })
+    }
+}
+
+impl PartialEq<RoleTemplate> for IoCattleManagementv3RoleTemplate {
+    fn eq(&self, other: &RoleTemplate) -> bool {
+        let lhs = self.metadata.as_ref().and_then(|m| m.name.clone());
+        let rhs = Some(other.id.clone());
+
+        lhs == rhs
+            && self.administrative == other.administrative
+            && self.builtin == other.builtin
+            && self.cluster_creator_default == other.cluster_creator_default
+            && self.context == other.context
+            && self.description == other.description
+            && self.display_name == other.display_name
+            && self.external == other.external
+            && self.hidden == other.hidden
+            && self.locked == other.locked
+            && self.project_creator_default == other.project_creator_default
+            && self.role_template_names == other.role_template_names
+            && self.rules == other.rules
+    }
+}
+
+
+impl PartialEq<IoCattleManagementv3RoleTemplate> for RoleTemplate {
+    fn eq(&self, other: &IoCattleManagementv3RoleTemplate) -> bool {
+        let lhs = Some(self.id.clone());
+        let rhs = other.metadata.as_ref().and_then(|m| m.name.clone());
+
+        self.administrative == other.administrative
+            && self.builtin == other.builtin
+            && self.cluster_creator_default == other.cluster_creator_default
+            && self.context == other.context
+            && self.description == other.description
+            && self.display_name == other.display_name
+            && self.external == other.external
+            && self.hidden == other.hidden
+            && self.locked == other.locked
+            && lhs == rhs
+            && self.project_creator_default == other.project_creator_default
+            && self.role_template_names == other.role_template_names
+            && self.rules == other.rules
+    }
+}
+
+
+
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::convert::TryFrom;
+
+    fn sample_metadata(name: &str) -> Box<IoK8sApimachineryPkgApisMetaV1ObjectMeta> {
+        Box::new(IoK8sApimachineryPkgApisMetaV1ObjectMeta {
+            name: Some(name.to_string()),
+            ..Default::default()
+        })
+    }
+
+    fn sample_role_template() -> RoleTemplate {
+        RoleTemplate::new(
+            Some(true),
+            Some(false),
+            Some(true),
+            Some(Context::Cluster),
+            Some("A role template".to_string()),
+            Some("Admin".to_string()),
+            Some(false),
+            Some(false),
+            Some(false),
+            "admin-template".to_string(),
+            Some(false),
+            Some(vec!["base-template".to_string()]),
+            Some(vec![]), // You can add more detailed rule samples if needed
+        )
+    }
+
+    fn sample_iocattle_role_template() -> IoCattleManagementv3RoleTemplate {
+        IoCattleManagementv3RoleTemplate {
+            administrative: Some(true),
+            api_version: Some("management.cattle.io/v3".to_string()),
+            builtin: Some(false),
+            cluster_creator_default: Some(true),
+            context: Some(Context::Cluster),
+            description: Some("A role template".to_string()),
+            display_name: Some("Admin".to_string()),
+            external: Some(false),
+            hidden: Some(false),
+            kind: Some("RoleTemplate".to_string()),
+            locked: Some(false),
+            metadata: Some(sample_metadata("admin-template")),
+            project_creator_default: Some(false),
+            role_template_names: Some(vec!["base-template".to_string()]),
+            rules: Some(vec![]),
+        }
+    }
+
+    #[test]
+    fn test_iocattle_to_role_template_conversion_success() {
+        let io_rt = sample_iocattle_role_template();
+        let result = RoleTemplate::try_from(io_rt).unwrap();
+        assert_eq!(result.id, "admin-template");
+        assert_eq!(result.display_name.as_deref(), Some("Admin"));
+        assert_eq!(result.project_creator_default, Some(false));
+    }
+
+    #[test]
+    fn test_role_template_to_iocattle_conversion_success() {
+        let rt = sample_role_template();
+        let result = IoCattleManagementv3RoleTemplate::try_from(rt).unwrap();
+        assert_eq!(
+            result.metadata.as_ref().unwrap().name.as_deref(),
+            Some("admin-template")
+        );
+        assert_eq!(result.display_name.as_deref(), Some("Admin"));
+        assert_eq!(result.project_creator_default, Some(false));
+    }
+
+    #[test]
+    fn test_iocattle_to_role_template_missing_metadata() {
+        let mut io_rt = sample_iocattle_role_template();
+        io_rt.metadata = None;
+        let result = RoleTemplate::try_from(io_rt);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_iocattle_to_role_template_missing_metadata_name() {
+        let mut io_rt = sample_iocattle_role_template();
+        io_rt.metadata.as_mut().unwrap().name = None;
+        let result = RoleTemplate::try_from(io_rt);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_round_trip_conversion() {
+        let original = sample_role_template();
+        let back_and_forth = RoleTemplate::try_from(
+            IoCattleManagementv3RoleTemplate::try_from(original.clone()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(original, back_and_forth);
+    }
+
+
+    #[test]
+    fn test_equality_both_directions() {
+        let rt = sample_role_template();
+        let iort = sample_iocattle_role_template();
+
+        // Forward comparison
+        assert_eq!(iort, rt);
+
+        // Reverse comparison
+        assert_eq!(rt, iort);
+    }
+
+    #[test]
+    fn test_inequality_on_field() {
+        let rt = sample_role_template();
+        let mut iort = sample_iocattle_role_template();
+
+        // Change display name
+        iort.display_name = Some("Changed".into());
+
+        assert_ne!(rt, iort);
+        assert_ne!(iort, rt);
+    }
+
+    #[test]
+    fn test_missing_metadata_name() {
+        let rt = sample_role_template();
+        let mut iort = sample_iocattle_role_template();
+
+        // Remove the name field
+        if let Some(metadata) = iort.metadata.as_mut() {
+            metadata.name = None;
+        }
+
+        assert_ne!(rt, iort);
+        assert_ne!(iort, rt);
+    }
+
+
+
+}

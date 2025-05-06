@@ -1,4 +1,4 @@
-use git2::AnnotatedCommit;
+
 use serde::{Deserialize, Serialize};
 
 use rancher_client::{apis::{configuration::Configuration, management_cattle_io_v3_api::{read_management_cattle_io_v3_namespaced_project, ReadManagementCattleIoV3NamespacedProjectError}, Error, ResponseContent}, models::{self, IoCattleManagementv3ProjectSpec, IoK8sApimachineryPkgApisMetaV1ObjectMeta}};
@@ -216,47 +216,6 @@ impl Project {
     }
 }
 
-
-// impl TryFrom<IoCattleManagementv3Project> for Project {
-//     type Error = &'static str;
-
-//     fn try_from(value: IoCattleManagementv3Project) -> Result<Self, Self::Error> {
-//         let metadata: IoK8sApimachineryPkgApisMetaV1ObjectMeta =
-//             *value.metadata.ok_or("missing metadata")?;
-
-//         let spec: IoCattleManagementv3ProjectSpec = *value.spec.ok_or("missing spec")?;
-
-//         let container_default_resource_limit = spec
-//             .container_default_resource_limit;
-
-//         let namespace_default_resource_quota = spec
-//             .namespace_default_resource_quota;
-
-//         // let resource_quota = resource_quota;
-
-//         let resource_quota = match spec.resource_quota {
-//             Some(ref quota) => Some(*quota.clone()),
-//             None => None,
-//         };
-
-//         let resource_quota_limit = match resource_quota {
-//             Some(quota) => quota.limit,
-//             None => None,
-//         };
-
-//         Ok(Project {
-//             cluster_name: spec.cluster_name,
-//             id: metadata.name.ok_or("missing metadata.name")?,
-//             description: spec.description.unwrap_or_default(),
-//             container_default_resource_limit: container_default_resource_limit.as_deref().cloned(),
-//             display_name: spec.display_name,
-//             enable_project_monitoring: spec.enable_project_monitoring.unwrap_or(false),
-//             namespace_default_resource_quota: namespace_default_resource_quota.as_deref().cloned(),
-//             resource_quota: resource_quota_limit.as_deref().cloned(),
-//         })
-//     }
-// }
-
 impl TryFrom<IoCattleManagementv3Project> for Project {
     type Error = &'static str;
 
@@ -330,5 +289,110 @@ impl TryFrom<Project> for IoCattleManagementv3Project {
             spec: Some(Box::new(spec)),
             status: None,
         })
+    }
+}
+
+
+impl PartialEq<Project> for IoCattleManagementv3Project {
+    fn eq(&self, other: &Project) -> bool {
+        let metadata = match &self.metadata {
+            Some(m) => m,
+            None => return false,
+        };
+
+        let spec = match &self.spec {
+            Some(s) => s,
+            None => return false,
+        };
+
+        let resource_quota_limit = spec.resource_quota
+            .as_ref()
+            .and_then(|rq| rq.limit.as_deref());
+        
+
+        let container_limit = spec.container_default_resource_limit.as_deref();
+        let namespace_quota = spec.namespace_default_resource_quota.as_deref();
+
+        metadata.name.as_deref() == Some(&other.id)
+            && spec.cluster_name == other.cluster_name
+            && spec.description.as_deref().unwrap_or_default() == other.description
+            && spec.display_name == other.display_name
+            && spec.enable_project_monitoring.unwrap_or(false) == other.enable_project_monitoring
+            && metadata.annotations == other.annotations
+            && metadata.labels == other.labels
+            && container_limit == other.container_default_resource_limit.as_ref()
+            && namespace_quota == other.namespace_default_resource_quota.as_ref()
+            && resource_quota_limit == other.resource_quota.as_ref()
+    }
+}
+
+
+impl PartialEq<IoCattleManagementv3Project> for Project {
+    fn eq(&self, other: &IoCattleManagementv3Project) -> bool {
+        other == self
+    }
+}
+
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    fn sample_project() -> Project {
+        Project {
+            cluster_name: "cluster-1".to_string(),
+            id: "proj-1".to_string(),
+            description: "Test project".to_string(),
+            annotations: Some(std::collections::HashMap::new()),
+            labels: Some(std::collections::HashMap::new()),
+            container_default_resource_limit: None,
+            display_name: "Project One".to_string(),
+            enable_project_monitoring: true,
+            namespace_default_resource_quota: None,
+            resource_quota: None,
+        }
+    }
+
+    fn sample_iocattle_project() -> IoCattleManagementv3Project {
+        IoCattleManagementv3Project {
+            metadata: Some(Box::new(models::IoK8sApimachineryPkgApisMetaV1ObjectMeta {
+                name: Some("proj-1".to_string()),
+                annotations: Some(std::collections::HashMap::new()),
+                labels: Some(std::collections::HashMap::new()),
+                ..Default::default()
+            })),
+            spec: Some(Box::new(models::IoCattleManagementv3ProjectSpec {
+                cluster_name: "cluster-1".to_string(),
+                description: Some("Test project".to_string()),
+                display_name: "Project One".to_string(),
+                enable_project_monitoring: Some(true),
+                container_default_resource_limit: None,
+                namespace_default_resource_quota: None,
+                resource_quota: None,
+                ..Default::default()
+            })),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_eq_both_directions() {
+        let project = sample_project();
+        let rancher_project = sample_iocattle_project();
+
+        assert_eq!(rancher_project, project);
+        assert_eq!(project, rancher_project); // requires the reverse impl
+    }
+
+    #[test]
+    fn test_inequality() {
+        let mut project = sample_project();
+        let rancher_project = sample_iocattle_project();
+
+        project.description = "Changed".to_string();
+
+        assert_ne!(rancher_project, project);
+        assert_ne!(project, rancher_project);
     }
 }
