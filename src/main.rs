@@ -1,5 +1,5 @@
-#[allow(unused_imports)]
-
+#![allow(unused_variables)]
+#![allow(unused_imports)]
 
 use rancher_cac::git::push_repo_to_remote;
 use rancher_cac::git::{init_git_repo_with_main_branch, commit_changes};
@@ -9,7 +9,6 @@ use rancher_cac::FileFormat;
 use rancher_cac::load_project;
 
 use rancher_cac::project::find_project;
-
 
 use chrono;
 
@@ -63,7 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let project_id = "p-w82pc";
 
     // load project from path
-    let project = load_project(&path, configuration.base_path.clone().as_str(),  cluster_id, project_id, FileFormat::Yaml);
+    let project = load_project(&path, configuration.base_path.clone().as_str(),  cluster_id, project_id, file_format).await;
 
     // print the project
     println!("{:#?}", project);

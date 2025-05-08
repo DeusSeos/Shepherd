@@ -226,7 +226,7 @@ pub async fn download_current_configuration(configuration: &Configuration, path:
 /// # Returns
 /// `Project`: The project object
 ///
-pub fn load_project(base_path: &PathBuf, endpoint_url: &str, cluster_id: &str, project_id: &str, file_format: FileFormat) -> Project {
+pub async fn load_project(base_path: &PathBuf, endpoint_url: &str, cluster_id: &str, project_id: &str, file_format: FileFormat) -> Project {
     // create the path to the project
     let project_path = base_path.join(endpoint_url.replace("https://", "").replace("/", "_")).join(cluster_id).join(project_id);
     // check if the path exists
