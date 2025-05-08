@@ -87,7 +87,7 @@ pub async fn get_projects(
 
 
 
-/// Get a project by its ID
+/// Find a project by its ID
 /// 
 /// # Arguments
 /// 
@@ -101,7 +101,7 @@ pub async fn get_projects(
 /// 
 /// * `Error<ListManagementCattleIoV3NamespacedProjectError>` - The error that occurred while trying to get the project
 /// 
-pub async fn get_project(
+pub async fn find_project(
     configuration: &Configuration,
     cluster_id: &str,
     project_id: &str,

@@ -8,6 +8,9 @@ use rancher_cac::download_current_configuration;
 use rancher_cac::FileFormat;
 use rancher_cac::load_project;
 
+use rancher_cac::project::find_project;
+
+
 use chrono;
 
 use reqwest_middleware::ClientBuilder;
@@ -39,22 +42,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let file_format = FileFormat::Yaml;
 
     // Download the current configuration from the Rancher API
-    download_current_configuration(&configuration, &path, file_format).await;
+    // download_current_configuration(&configuration, &path, file_format).await;
 
     // set up the remote url to be git@github.com/DeusSeos/rancher_config.git
-    let remote_url = "git@github.com:DeusSeos/rancher_config.git";
+    // let remote_url = "git@github.com:DeusSeos/rancher_config.git";
 
 
-    // Initialize a git repository in the path or if error, commit a change with current datetime
-    init_git_repo_with_main_branch(&path, &remote_url).unwrap_or_else(|_| {
-        // commit a change with current datetime
-        let now = chrono::Utc::now();
-        let datetime = now.format("%Y-%m-%d %H:%M:%S").to_string();
-        let message = format!("Updated configuration at {}", datetime);
-        commit_changes(&path, &message).unwrap();
-        println!("Error initializing git repository, committed changes with message: {}", message);
+    // // Initialize a git repository in the path or if error, commit a change with current datetime
+    // init_git_repo_with_main_branch(&path, &remote_url).unwrap_or_else(|_| {
+    //     // commit a change with current datetime
+    //     let now = chrono::Utc::now();
+    //     let datetime = now.format("%Y-%m-%d %H:%M:%S").to_string();
+    //     let message = format!("Updated configuration at {}", datetime);
+    //     commit_changes(&path, &message).unwrap();
+    //     println!("Error initializing git repository, committed changes with message: {}", message);
         
-    });
+    // });
 
     let cluster_id = "local";
     let project_id = "p-w82pc";
@@ -65,6 +68,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // print the project
     println!("{:#?}", project);
 
+    // fetch the project from cluster
+    let rancher_project = find_project(&configuration, cluster_id, project_id).await.unwrap();
+
+    // print the project
+    println!("{:#?}", rancher_project);
+
+    // check equality
+    if project == rancher_project {
+        println!("Project is equal");
+    } else {
+        println!("Project is not equal");
+    }
 
     // push the repo to the remote
     // push_repo_to_remote(&path, &remote_url).unwrap();
