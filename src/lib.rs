@@ -6,6 +6,11 @@ pub mod prtb;
 pub mod git;
 
 use std::path::PathBuf;
+use json_patch::diff;
+use serde::{de::DeserializeOwned, Serialize};
+use serde_json::Value;
+
+use std::collections::{BTreeSet, HashMap};
 
 use cluster::Cluster;
 use project::Project;
@@ -52,7 +57,7 @@ pub fn rancher_config_init(host: &str, token: &str) -> Configuration {
 // the folder will be created if it does not exist
 // the function will return the path to the folder
 
-pub async fn download_current_configuration(configuration: &Configuration, path: &PathBuf, file_format: FileFormat) {
+pub async fn download_current_configuration(configuration: &Configuration, path: &PathBuf, file_format: &FileFormat) {
     // Get the current configuration from the Rancher API
     let rancher_cluster = cluster::get_clusters(configuration).await.map_err(|e| {
         println!("Failed to get clusters: {:?}", e);
@@ -215,6 +220,7 @@ pub async fn download_current_configuration(configuration: &Configuration, path:
 }
 
 
+
 /// load a specific project configuration from the base path
 /// 
 /// # Arguments
@@ -250,10 +256,64 @@ pub async fn load_project(base_path: &PathBuf, endpoint_url: &str, cluster_id: &
     deserialize_object(&project_file_content, file_format)
 }
 
+/// Remove a deeply nested field from a JSON object and remove it.
+/// Traverses objects by key. Returns `None` if any key is missing or the path is invalid.
+pub fn remove_path_and_return(value: &mut Value, path: &[&str]) -> Option<Value> {
+    if path.is_empty() {
+        return None;
+    }
+
+    let mut current = value;
+
+    // Traverse to the parent of the key to remove
+    for &key in &path[..path.len() - 1] {
+        current = current
+            .as_object_mut()?
+            .get_mut(key)?;
+    }
+
+    let last_key = *path.last().unwrap();
+
+    // Remove the target key
+    current
+        .as_object_mut().unwrap()
+        .remove(last_key)
+}
+
+
+/// Compare two optional boxed annotation‐maps and print per‐key changes.
+fn diff_boxed_hashmap_string_string(
+    a: &Option<Box<HashMap<String, String>>>,
+    b: &Option<Box<HashMap<String, String>>>,
+) {
+    // Treat None as empty map
+    let binding = HashMap::new();
+    let ma = a.as_deref().unwrap_or(&binding);
+    let binding = HashMap::new();
+    let mb = b.as_deref().unwrap_or(&binding);
+
+    // Collect all keys
+    let keys: BTreeSet<_> = ma.keys().chain(mb.keys()).collect();
+
+    for key in keys {
+        match (ma.get(key), mb.get(key)) {
+            (Some(old), Some(new)) if old != new => {
+                println!("Hashmap changed  {}: {:?} → {:?}", key, old, new);
+            }
+            (None, Some(new)) => {
+                println!("Hashmap added    {}: {:?}", key, new);
+            }
+            (Some(old), None) => {
+                println!("Hashmap removed  {}: {:?}", key, old);
+            }
+            _ => { /* unchanged */ }
+        }
+    }
+}
 
 
 
-// serialize the object to the format specified
+/// serialize the object to the file format specified
 pub fn serialize_object<T: serde::Serialize>(object: &T, file_format: &FileFormat) -> String {
     match file_format {
         FileFormat::Yaml => serde_yaml::to_string(object).map_err(|e| {
@@ -269,6 +329,25 @@ pub fn serialize_object<T: serde::Serialize>(object: &T, file_format: &FileForma
             std::process::exit(1);
         }).unwrap(),
     }
+}
+
+
+pub fn create_json_patch<T>(current_state: &Value, desired_state: &Value, ) -> Value 
+    where 
+        T: Serialize + DeserializeOwned {
+    // enforce conversion to IoCattleManagementv3Project
+    let current: T = serde_json::from_value(current_state.clone()).unwrap();
+    let desired:  T = serde_json::from_value(desired_state.clone()).unwrap();
+
+    // Serialize back to JSON values
+    let current_value = serde_json::to_value(current).unwrap();
+    let desired_value = serde_json::to_value(desired).unwrap();
+
+    // Compute the JSON patch
+    let patch = diff(&current_value, &desired_value);
+
+    // Convert the patch to a JSON value
+    serde_json::to_value(patch).unwrap()
 }
 
 
