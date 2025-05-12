@@ -40,3 +40,60 @@ pub struct RancherClusterConfig {
     pub projects: HashMap<String, (IoCattleManagementv3Project, Vec<IoCattleManagementv3ProjectRoleTemplateBinding>)>,
 }
 
+
+// conversion from ClusterConfig to RancherClusterConfig
+
+impl TryFrom<ClusterConfig> for RancherClusterConfig {
+    type Error = &'static str;
+
+    fn try_from(value: ClusterConfig) -> Result<Self, Self::Error> {
+        // 1. Cluster
+        let rancher_cluster =
+            IoCattleManagementv3Cluster::try_from(value.cluster).map_err(|_| "cluster conversion failed")?;
+
+        // 2. Role-templates: map + collect into Vec<…>
+        let rancher_role_templates = value
+            .role_templates
+            .into_iter()
+            .map(|rt| {
+                IoCattleManagementv3RoleTemplate::try_from(rt)
+                    .map_err(|_| "role-template conversion failed")
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // 3. Projects → HashMap<String, (Project, Vec<Binding>)>
+        let rancher_projects = value
+        .projects
+        .into_iter()
+        .map(|(project_id, (project, bindings))| -> Result<
+            (String, (IoCattleManagementv3Project, Vec<IoCattleManagementv3ProjectRoleTemplateBinding>)),
+            &'static str,
+        > {
+            // convert the Project
+            let rp = IoCattleManagementv3Project::try_from(project)
+                .map_err(|_| "project conversion failed")?;
+            // convert each binding
+            let rb = bindings
+                .into_iter()
+                .map(|b| {
+                    IoCattleManagementv3ProjectRoleTemplateBinding::try_from(b)
+                        .map_err(|_| "binding conversion failed")
+                })
+                .collect::<Result<Vec<_>, &'static str>>()?;
+            // here you return the one `(key, value)` pair
+            Ok((project_id, (rp, rb)))
+        })
+        // now collect into a HashMap<_, _>, propagating any of the &'static str errors
+        .collect::<Result<
+            HashMap<String, (IoCattleManagementv3Project, Vec<IoCattleManagementv3ProjectRoleTemplateBinding>)>,
+            &'static str,
+        >>()?;
+
+
+        Ok(RancherClusterConfig {
+            cluster: rancher_cluster,
+            role_templates: rancher_role_templates,
+            projects: rancher_projects,
+        })
+    }
+}

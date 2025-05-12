@@ -27,6 +27,7 @@ use rancher_client::{
 ///
 /// * `Error<ListManagementCattleIoV3ClustersError>` - The error that occurred while trying to get the clusters
 ///
+#[async_backtrace::framed]
 pub async fn get_clusters(
     configuration: &Configuration,
 ) -> Result<IoCattleManagementv3ClusterList, Error<ListManagementCattleIoV3ClustersError>> {

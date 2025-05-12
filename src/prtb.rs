@@ -21,6 +21,7 @@ use rancher_client::{
 pub const PRTB_EXCLUDE_PATHS: &[&str] = &[
     "metadata.creationTimestamp",
     "metadata.finalizers",
+    "metadata.generateName",
     "metadata.generation",
     "metadata.managedFields",
     "metadata.resourceVersion",
@@ -42,6 +43,7 @@ pub const PRTB_EXCLUDE_PATHS: &[&str] = &[
 ///
 /// * `Error<ListManagementCattleIoV3ProjectRoleTemplateBindingForAllNamespacesError>` - The error that occurred while trying to get the bindings
 ///
+#[async_backtrace::framed]
 pub async fn get_project_role_template_bindings(
     configuration: &Configuration,
     field_selector: Option<&str>,
@@ -119,6 +121,7 @@ pub async fn get_project_role_template_bindings(
 /// # Errors
 ///
 /// * `Error<ListManagementCattleIoV3ProjectRoleTemplateBindingForAllNamespacesError>` - The error that occurred while trying to get the bindings
+#[async_backtrace::framed]
 pub async fn get_namespaced_project_role_template_bindings(
     configuration: &Configuration,
     project_id: &str,
@@ -317,6 +320,9 @@ impl TryFrom<ProjectRoleTemplateBinding> for IoCattleManagementv3ProjectRoleTemp
     fn try_from(value: ProjectRoleTemplateBinding) -> Result<Self, Self::Error> {
         // Create a new IoCattleManagementv3ProjectRoleTemplateBinding instance
         let metadata = IoK8sApimachineryPkgApisMetaV1ObjectMeta {
+            annotations: value.annotations,
+            labels: value.labels,
+            namespace: Some(value.namespace),
             name: Some(value.id.clone()),
             ..Default::default()
         };

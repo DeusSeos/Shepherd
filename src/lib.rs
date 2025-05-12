@@ -63,6 +63,7 @@ pub fn rancher_config_init(host: &str, token: &str) -> Configuration {
 // the folder will be created if it does not exist
 // the function will return the path to the folderm
 
+#[async_backtrace::framed]
 pub async fn download_current_configuration(
     configuration: &Configuration,
     path: &Path,
@@ -294,6 +295,7 @@ pub async fn download_current_configuration(
     }
 }
 
+#[async_backtrace::framed]
 pub async fn load_configuration_from_rancher(
     configuration: &Configuration,
     cluster_id: &str) -> RancherClusterConfig {
@@ -397,6 +399,7 @@ pub async fn load_configuration_from_rancher(
 /// `file_format`: The file format to load the configuration from
 /// # Returns
 /// `Option<ClusterConfig>`: The configuration object
+#[async_backtrace::framed]
 pub async fn load_configuration(
     path: &Path,
     endpoint_url: &str,
@@ -597,8 +600,11 @@ pub fn compute_cluster_diff(
 
     // create a new rancher cluster object
     // convert to RancherClusterConfig
+
     let current_state: RancherClusterConfig = serde_json::from_value(current_state.clone()).unwrap();
+
     let desired_state: RancherClusterConfig = serde_json::from_value(desired_state.clone()).unwrap();
+
 
 
     // let cluster = current_state.cluster.clone();
@@ -622,8 +628,9 @@ pub fn compute_cluster_diff(
             let mut drtv = serde_json::to_value(desired_rt).unwrap();
             clean_up_value(&mut crtv, RT_EXCLUDE_PATHS);
             clean_up_value(&mut drtv, RT_EXCLUDE_PATHS);
-            let patch = create_json_patch::<RoleTemplate>(&crtv, &drtv);
-            patches.push(patch);
+            let patch = create_json_patch::<IoCattleManagementv3RoleTemplate>(&crtv, &drtv);
+            if patch.is_some() { println!("{}", crtv)}
+            patch.map(|patch| patches.push(patch));
         }
     }
 
@@ -636,8 +643,10 @@ pub fn compute_cluster_diff(
             let mut dpv = serde_json::to_value(d_project).unwrap();
             clean_up_value(&mut cpv, PROJECT_EXCLUDE_PATHS);
             clean_up_value(&mut dpv, PROJECT_EXCLUDE_PATHS);
-            let patch = create_json_patch::<Project>(&cpv, &dpv);
-            patches.push(patch);
+            // TODO: fix conversion from IoCattleManagementv3Project to Value to Project will cause errors bc of fields not matching ie clusterName -> clusterName -> cluster_name
+            let patch = create_json_patch::<IoCattleManagementv3Project>(&cpv, &dpv);
+            if patch.is_some() { println!("{}", cpv)}
+            patch.map(|patch| patches.push(patch));
 
             // loop through the project role template bindings and compare them
             for cprtb in cprtbs {
@@ -647,8 +656,9 @@ pub fn compute_cluster_diff(
                     let mut dprtbv = serde_json::to_value(desired_prtb).unwrap();
                     clean_up_value(&mut cprtbv, PRTB_EXCLUDE_PATHS);
                     clean_up_value(&mut dprtbv, PRTB_EXCLUDE_PATHS);
-                    let patch = create_json_patch::<ProjectRoleTemplateBinding>(&cprtbv, &dprtbv);
-                    patches.push(patch);
+                    let patch = create_json_patch::<IoCattleManagementv3ProjectRoleTemplateBinding>(&cprtbv, &dprtbv);
+                    if patch.is_some() { println!("{}", cprtbv)}
+                    patch.map(|patch| patches.push(patch));
                 }
             }
         }
@@ -668,6 +678,7 @@ pub fn compute_cluster_diff(
 /// # Returns
 /// `Project`: The project object
 ///
+#[async_backtrace::framed]
 pub async fn load_project(
     base_path: &Path,
     endpoint_url: &str,
@@ -782,7 +793,7 @@ fn diff_boxed_hashmap_string_string(
 /// # Returns
 /// * A JSON value representing the patch.
 ///
-pub fn create_json_patch<T>(current_state: &Value, desired_state: &Value) -> Value
+pub fn create_json_patch<T>(current_state: &Value, desired_state: &Value) -> Option<Value>
 where
     T: Serialize + DeserializeOwned,
 {
@@ -797,8 +808,11 @@ where
     // Compute the JSON patch
     let patch = diff(&current_value, &desired_value);
 
-    // Convert the patch to a JSON value
-    serde_json::to_value(patch).unwrap()
+    // Convert the patch to a JSON value if it isn't empty
+    if !patch.is_empty() {
+        return Some(serde_json::to_value(patch).unwrap())
+    }
+    None
 }
 
 /// serialize the object to the file format specified

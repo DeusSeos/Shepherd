@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 use rancher_client::apis::{configuration::Configuration, Error, ResponseContent};
@@ -17,6 +19,7 @@ use rancher_client::{
 pub const RT_EXCLUDE_PATHS: &[&str] = &[
     "metadata.creationTimestamp",
     "metadata.finalizers",
+    "metadata.generateName",
     "metadata.generation",
     "metadata.managedFields",
     "metadata.resourceVersion",
@@ -40,6 +43,7 @@ pub const RT_EXCLUDE_PATHS: &[&str] = &[
 ///
 /// * `Error<ListManagementCattleIoV3RoleTemplateError>` - The error that occurred while trying to get the role templates
 ///
+#[async_backtrace::framed]
 pub async fn get_role_templates(
     configuration: &Configuration,
     field_selector: Option<&str>,
@@ -106,10 +110,13 @@ pub async fn get_role_templates(
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct RoleTemplate {
+
     /// Administrative if true, this RoleTemplate is used to grant administrative privileges. Default to false.
     /// This field is not set in the API, but is used to determine if the role template is administrative
     #[serde(skip_serializing_if = "Option::is_none")]
     pub administrative: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub builtin: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -125,6 +132,8 @@ pub struct RoleTemplate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hidden: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub labels: Option<HashMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub locked: Option<bool>,
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -138,7 +147,7 @@ pub struct RoleTemplate {
 impl RoleTemplate {
     pub fn new(
         administrative: Option<bool>,
-
+        annotations: Option<HashMap<String, String>>,
         builtin: Option<bool>,
         cluster_creator_default: Option<bool>,
         context: Option<Context>,
@@ -146,6 +155,7 @@ impl RoleTemplate {
         display_name: Option<String>,
         external: Option<bool>,
         hidden: Option<bool>,
+        labels: Option<HashMap<String, String>>,
         locked: Option<bool>,
         id: String,
         project_creator_default: Option<bool>,
@@ -153,6 +163,7 @@ impl RoleTemplate {
         rules: Option<Vec<IoCattleManagementv3GlobalRoleRulesInner>>,
     ) -> Self {
         RoleTemplate {
+            annotations,
             administrative,
             builtin,
             cluster_creator_default,
@@ -161,6 +172,7 @@ impl RoleTemplate {
             display_name,
             external,
             hidden,
+            labels,
             locked,
             id,
             project_creator_default,
@@ -176,14 +188,16 @@ impl TryFrom<IoCattleManagementv3RoleTemplate> for RoleTemplate {
     fn try_from(value: IoCattleManagementv3RoleTemplate) -> Result<Self, Self::Error> {
         let metadata: IoK8sApimachineryPkgApisMetaV1ObjectMeta = value.metadata.ok_or("missing metadata")?;
 
-        let context = value.context;
         let administrative: Option<bool> = value.administrative;
+        let annotations: Option<HashMap<String, String>> = metadata.annotations;
         let builtin: Option<bool> = value.builtin;
         let cluster_creator_default: Option<bool> = value.cluster_creator_default;
+        let context = value.context;
         let description: Option<String> = value.description;
         let display_name: Option<String> = value.display_name;
         let external: Option<bool> = value.external;
         let hidden: Option<bool> = value.hidden;
+        let labels: Option<HashMap<String, String>> = metadata.labels;
         let locked: Option<bool> = value.locked;
         let project_creator_default: Option<bool> = value.project_creator_default;
         let role_template_names: Option<Vec<String>> = value.role_template_names;
@@ -191,6 +205,7 @@ impl TryFrom<IoCattleManagementv3RoleTemplate> for RoleTemplate {
 
         Ok(RoleTemplate {
             administrative,
+            annotations,
             builtin,
             cluster_creator_default,
             context,
@@ -198,8 +213,9 @@ impl TryFrom<IoCattleManagementv3RoleTemplate> for RoleTemplate {
             display_name,
             external,
             hidden,
-            locked,
             id: metadata.name.ok_or("missing metadata.name")?,
+            labels,
+            locked,
             project_creator_default,
             role_template_names,
             rules,
@@ -212,6 +228,8 @@ impl TryFrom<RoleTemplate> for IoCattleManagementv3RoleTemplate {
 
     fn try_from(value: RoleTemplate) -> Result<Self, Self::Error> {
         let metadata = IoK8sApimachineryPkgApisMetaV1ObjectMeta {
+            annotations: value.annotations,
+            labels: value.labels,
             name: Some(value.id.clone()),
             ..Default::default()
         };
@@ -313,19 +331,21 @@ mod tests {
 
     fn sample_role_template() -> RoleTemplate {
         RoleTemplate::new(
-            Some(true),
-            Some(false),
-            Some(true),
-            Some(Context::Cluster),
-            Some("A role template".to_string()),
-            Some("Admin".to_string()),
-            Some(false),
-            Some(false),
-            Some(false),
-            "admin-template".to_string(),
-            Some(false),
-            Some(vec!["base-template".to_string()]),
-            Some(vec![]), // You can add more detailed rule samples if needed
+            Some(true), // administrative
+            Some(std::collections::HashMap::new()), // annotations
+            Some(false), // builtin
+            Some(true), // cluster_creator_default
+            Some(Context::Cluster), // context
+            Some("A role template".to_string()), // description
+            Some("Admin".to_string()), // display_name
+            Some(false), // external
+            Some(false), // hidden
+            Some(std::collections::HashMap::new()), // labels
+            Some(false), // locked
+            "admin-template".to_string(), // id
+            Some(false), // project_creator_default
+            Some(vec!["base-template".to_string()]), // role_template_names
+            Some(vec![]), // rules
         )
     }
 

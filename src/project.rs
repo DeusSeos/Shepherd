@@ -57,6 +57,7 @@ pub const PROJECT_EXCLUDE_PATHS: &[&str] = &[
 /// # Errors
 ///
 /// * `Error<ListManagementCattleIoV3NamespacedProjectError>` - The error that occurred while trying to get the projects
+#[async_backtrace::framed]
 pub async fn get_projects(
     configuration: &Configuration,
     cluster_id: &str,
@@ -134,6 +135,7 @@ pub async fn get_projects(
 ///
 /// * `Error<ListManagementCattleIoV3NamespacedProjectError>` - The error that occurred while trying to get the project
 ///
+#[async_backtrace::framed]
 pub async fn find_project(
     configuration: &Configuration,
     cluster_id: &str,
@@ -191,6 +193,7 @@ pub async fn find_project(
 /// # Errors
 /// * `Error<PatchManagementCattleIoV3NamespacedProjectError>` - The error that occurred while trying to patch the project
 ///
+#[async_backtrace::framed]
 pub async fn update_project(
     configuration: &Configuration,
     cluster_id: &str,
@@ -568,17 +571,17 @@ mod tests {
 
     fn sample_project() -> Project {
         Project {
-            cluster_name: "cluster-1".to_string(),
-            id: "proj-1".to_string(),
-            description: "Test project".to_string(),
             annotations: Some(std::collections::HashMap::new()),
-            labels: Some(std::collections::HashMap::new()),
+            cluster_name: "cluster-1".to_string(),
             container_default_resource_limit: None,
+            description: "Test project".to_string(),
             display_name: "Project One".to_string(),
             enable_project_monitoring: Some(true),
+            id: "proj-1".to_string(),
+            labels: Some(std::collections::HashMap::new()),
             namespace_default_resource_quota: None,
-            resource_quota: None,
             namespace: "cluster-1".to_string(),
+            resource_quota: None,
             resource_version: Some("5555".to_string()),
             uid: Some("1234".to_string()),
         }
@@ -587,9 +590,9 @@ mod tests {
     fn sample_iocattle_project() -> IoCattleManagementv3Project {
         IoCattleManagementv3Project {
             metadata: Some(models::IoK8sApimachineryPkgApisMetaV1ObjectMeta {
-                name: Some("proj-1".to_string()),
                 annotations: Some(std::collections::HashMap::new()),
                 labels: Some(std::collections::HashMap::new()),
+                name: Some("proj-1".to_string()),
                 namespace: Some("cluster-1".to_string()),
                 resource_version: Some("5555".to_string()),
                 uid: Some("1234".to_string()),
@@ -597,10 +600,10 @@ mod tests {
             }),
             spec: Some(models::IoCattleManagementv3ProjectSpec {
                 cluster_name: "cluster-1".to_string(),
+                container_default_resource_limit: None,
                 description: Some("Test project".to_string()),
                 display_name: "Project One".to_string(),
                 enable_project_monitoring: Some(true),
-                container_default_resource_limit: None,
                 namespace_default_resource_quota: None,
                 resource_quota: None,
             }),

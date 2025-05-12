@@ -1,7 +1,11 @@
 #![allow(unused_variables)]
 #![allow(unused_imports)]
 
-use rancher_cac::{clean_up_value, create_json_patch, download_current_configuration, load_configuration, load_configuration_from_rancher, load_project, rancher_config_init, FileFormat, ResourceVersionMatch};
+use std::collections::HashMap;
+
+use rancher_cac::cluster::Cluster;
+use rancher_cac::config::RancherClusterConfig;
+use rancher_cac::{clean_up_value, compute_cluster_diff, create_json_patch, download_current_configuration, load_configuration, load_configuration_from_rancher, load_project, rancher_config_init, FileFormat, ResourceVersionMatch};
 use rancher_cac::git::{commit_changes, init_git_repo_with_main_branch, push_repo_to_remote};
 use rancher_cac::project::{find_project, get_projects, show_project_diff, show_text_diff, update_project, Project, PROJECT_EXCLUDE_PATHS};
 
@@ -194,14 +198,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>  {
     //     .await.map(|cluster_config| cluster_config.map(|c| println!( "{}", c)));
 
     let desired_cluster_configuration = load_configuration(&path, &endpoint_url, cluster_id, &file_format)
-        .await.unwrap();
+        .await.unwrap().unwrap();
 
     let current_cluster_configuration = load_configuration_from_rancher(&configuration, cluster_id).await;
 
     // convert to value
-    let desired_cluster_value: serde_json::Value = serde_json::to_value(desired_cluster_configuration).unwrap();
     let current_cluster_value: serde_json::Value = serde_json::to_value(current_cluster_configuration).unwrap();
+    let desired_cluster: RancherClusterConfig = RancherClusterConfig::try_from(desired_cluster_configuration).unwrap();
+    let desired_cluster_value: serde_json::Value = serde_json::to_value(desired_cluster).unwrap();
 
+    let diff = compute_cluster_diff(&current_cluster_value, &desired_cluster_value);
+
+    for patch in diff{
+        println!("{:?}", patch);
+    }
 
 
 
