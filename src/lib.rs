@@ -19,7 +19,7 @@ use project::{Project, PROJECT_EXCLUDE_PATHS};
 use prtb::{ProjectRoleTemplateBinding, PRTB_EXCLUDE_PATHS};
 use rt::{get_role_templates, RoleTemplate, RT_EXCLUDE_PATHS};
 
-use rancher_client::models::{IoCattleManagementv3Cluster, IoCattleManagementv3Project, IoCattleManagementv3ProjectRoleTemplateBinding, IoCattleManagementv3RoleTemplate};
+use rancher_client::models::{IoCattleManagementv3Project, IoCattleManagementv3ProjectRoleTemplateBinding, IoCattleManagementv3RoleTemplate};
 use rancher_client::apis::configuration::{ApiKey, Configuration};
 
 
@@ -362,7 +362,7 @@ pub async fn load_configuration_from_rancher(
         let rancher_project_role_template_bindings =
             prtb::get_namespaced_project_role_template_bindings(
                 configuration,
-                &project_id,
+                project_id,
                 None,
                 None,
                 None,
@@ -629,8 +629,7 @@ pub fn compute_cluster_diff(
             clean_up_value(&mut crtv, RT_EXCLUDE_PATHS);
             clean_up_value(&mut drtv, RT_EXCLUDE_PATHS);
             let patch = create_json_patch::<IoCattleManagementv3RoleTemplate>(&crtv, &drtv);
-            if patch.is_some() { println!("{}", crtv)}
-            patch.map(|patch| patches.push(patch));
+            if let Some(patch) = patch { patches.push(patch) }
         }
     }
 
@@ -645,8 +644,7 @@ pub fn compute_cluster_diff(
             clean_up_value(&mut dpv, PROJECT_EXCLUDE_PATHS);
             // TODO: fix conversion from IoCattleManagementv3Project to Value to Project will cause errors bc of fields not matching ie clusterName -> clusterName -> cluster_name
             let patch = create_json_patch::<IoCattleManagementv3Project>(&cpv, &dpv);
-            if patch.is_some() { println!("{}", cpv)}
-            patch.map(|patch| patches.push(patch));
+            if let Some(patch) = patch { patches.push(patch) }
 
             // loop through the project role template bindings and compare them
             for cprtb in cprtbs {
@@ -657,8 +655,7 @@ pub fn compute_cluster_diff(
                     clean_up_value(&mut cprtbv, PRTB_EXCLUDE_PATHS);
                     clean_up_value(&mut dprtbv, PRTB_EXCLUDE_PATHS);
                     let patch = create_json_patch::<IoCattleManagementv3ProjectRoleTemplateBinding>(&cprtbv, &dprtbv);
-                    if patch.is_some() { println!("{}", cprtbv)}
-                    patch.map(|patch| patches.push(patch));
+                    if let Some(patch) = patch { patches.push(patch) };
                 }
             }
         }
