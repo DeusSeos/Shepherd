@@ -130,11 +130,11 @@ pub async fn download_current_configuration(
         let role_template_file = role_template_path.join(format!(
             "{}.{}",
             role_template.id,
-            file_extension_from_format(&file_format)
+            file_extension_from_format(file_format)
         ));
         let _ = std::fs::write(
             &role_template_file,
-            serialize_object(role_template, &file_format),
+            serialize_object(role_template, file_format),
         )
         .map_err(|e| {
             println!("Failed to write file: {:?}", e);
@@ -174,10 +174,10 @@ pub async fn download_current_configuration(
         let cluster_file = cluster_path.join(format!(
             "{}.{}",
             cluster.id,
-            file_extension_from_format(&file_format)
+            file_extension_from_format(file_format)
         ));
         let _ =
-            std::fs::write(&cluster_file, serialize_object(cluster, &file_format)).map_err(|e| {
+            std::fs::write(&cluster_file, serialize_object(cluster, file_format)).map_err(|e| {
                 println!("Failed to write file: {:?}", e);
                 std::process::exit(1);
             });
@@ -231,9 +231,9 @@ pub async fn download_current_configuration(
             let project_file = project_path.join(format!(
                 "{}.{}",
                 project.id,
-                file_extension_from_format(&file_format)
+                file_extension_from_format(file_format)
             ));
-            let _ = std::fs::write(&project_file, serialize_object(project, &file_format)).map_err(
+            let _ = std::fs::write(&project_file, serialize_object(project, file_format)).map_err(
                 |e| {
                     println!("Failed to write file: {:?}", e);
                     std::process::exit(1);
@@ -280,10 +280,10 @@ pub async fn download_current_configuration(
                 let prtb_file = project_path.join(format!(
                     "{}.{}",
                     prtb.id,
-                    file_extension_from_format(&file_format)
+                    file_extension_from_format(file_format)
                 ));
                 let _ =
-                    std::fs::write(&prtb_file, serialize_object(prtb, &file_format)).map_err(|e| {
+                    std::fs::write(&prtb_file, serialize_object(prtb, file_format)).map_err(|e| {
                         println!("Failed to write file: {:?}", e);
                         std::process::exit(1);
                     });
@@ -326,7 +326,7 @@ pub async fn load_configuration(
     let cluster_file = cluster_folder_path.join(format!(
         "{}.{}",
         cluster_id,
-        file_extension_from_format(&file_format)
+        file_extension_from_format(file_format)
     ));
     // check if the file exists
     if !cluster_file.exists() {
@@ -338,7 +338,7 @@ pub async fn load_configuration(
     let cluster_file_content = std::fs::read_to_string(&cluster_file)
         .map_err(|e| {
             println!("Failed to read file: {:?}", e);
-            return e;
+            e
         })
         .unwrap();
 
@@ -409,7 +409,7 @@ pub async fn load_configuration(
             let project_file = project_folder.path().join(format!(
                 "{}.{}",
                 project_folder.file_name().to_str().unwrap(),
-                file_extension_from_format(&file_format)
+                file_extension_from_format(file_format)
             ));
             // check if the file exists
             if !project_file.exists() {
@@ -431,7 +431,7 @@ pub async fn load_configuration(
                 .insert(project.id.clone(), (project.clone(), Vec::new()));
 
             // read the project role template binding files, exclude the project file
-            let prtb_files = std::fs::read_dir(&project_folder.path())
+            let prtb_files = std::fs::read_dir(project_folder.path())
                 .map_err(|e| {
                     println!("Failed to read directory: {:?}", e);
                     e
@@ -557,7 +557,7 @@ pub fn compute_cluster_diff(
         }
     }
 
-    return patches;
+    patches
 }
 
 /// load a specific project configuration from the base path

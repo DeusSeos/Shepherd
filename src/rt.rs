@@ -57,12 +57,7 @@ pub async fn get_role_templates(
     match result {
         Err(e) => {
             // TODO: Handle specific error cases
-            match e {
-                _ => {
-                    // Handle other errors
-                    Err(e)
-                }
-            }
+            Err(e)
         },
         Ok(response_content) => {
             // Match on the status code and deserialize accordingly

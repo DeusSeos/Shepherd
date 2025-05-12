@@ -62,12 +62,7 @@ pub async fn get_project_role_template_bindings(
     match result {
         Err(e) => {
             // TODO: Handle specific error cases
-            match e {
-                _ => {
-                    // Handle other errors
-                    Err(e)
-                }
-            }
+            Err(e)
         },
         Ok(response_content) => {
             // Match on the status code and deserialize accordingly
@@ -146,12 +141,7 @@ pub async fn get_namespaced_project_role_template_bindings(
     match result {
         Err(e) => {
             // TODO: Handle specific error cases
-            match e {
-                _ => {
-                    // Handle other errors
-                    Err(e)
-                }
-            }
+            Err(e)
         },
         Ok(response_content) => {
             // Match on the status code and deserialize accordingly
@@ -282,13 +272,11 @@ impl TryFrom<IoCattleManagementv3ProjectRoleTemplateBinding> for ProjectRoleTemp
         let user_principal_name = value.user_principal_name;
         let annotations = metadata.annotations.map(|a| {
             a.into_iter()
-                .map(|(k, v)| (k, v))
                 .collect::<std::collections::HashMap<String, String>>()
         });
 
         let labels = metadata.labels.map(|a| {
             a.into_iter()
-                .map(|(k, v)| (k, v))
                 .collect::<std::collections::HashMap<String, String>>()
         });
         let namespace = metadata.namespace.unwrap_or_default();

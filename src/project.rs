@@ -88,12 +88,7 @@ pub async fn get_projects(
     match result {
         Err(e) => {
             // TODO: Handle specific error cases
-            match e {
-                _ => {
-                    // Handle other errors
-                    Err(e)
-                }
-            }
+            Err(e)
         }
         Ok(response_content) => {
             // Match on the status code and deserialize accordingly
@@ -366,13 +361,11 @@ impl TryFrom<IoCattleManagementv3Project> for Project {
 
         let annotations = metadata.annotations.map(|a| {
             a.into_iter()
-                .map(|(k, v)| (k, v))
                 .collect::<std::collections::HashMap<String, String>>()
         });
 
         let labels = metadata.labels.map(|a| {
             a.into_iter()
-                .map(|(k, v)| (k, v))
                 .collect::<std::collections::HashMap<String, String>>()
         });
 
@@ -403,12 +396,10 @@ impl TryFrom<Project> for IoCattleManagementv3Project {
             name: Some(value.id.clone()),
             annotations: value.annotations.clone().map(|a| {
                 a.into_iter()
-                    .map(|(k, v)| (k, v))
                     .collect::<std::collections::HashMap<String, String>>()
             }),
             labels: value.labels.clone().map(|a| {
                 a.into_iter()
-                    .map(|(k, v)| (k, v))
                     .collect::<std::collections::HashMap<String, String>>()
             }),
             namespace: Some(value.namespace.clone()),
@@ -482,13 +473,11 @@ impl PartialEq<Project> for IoCattleManagementv3Project {
 
         let annotations = other.annotations.clone().map(|a| {
             a.into_iter()
-                .map(|(k, v)| (k, v))
                 .collect::<std::collections::HashMap<String, String>>()
         });
 
         let labels = other.labels.clone().map(|a| {
             a.into_iter()
-                .map(|(k, v)| (k, v))
                 .collect::<std::collections::HashMap<String, String>>()
         });
 

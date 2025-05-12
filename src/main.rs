@@ -5,7 +5,6 @@ use rancher_cac::{clean_up_value, create_json_patch, download_current_configurat
 use rancher_cac::git::{commit_changes, init_git_repo_with_main_branch, push_repo_to_remote};
 use rancher_cac::project::{find_project, get_projects, show_project_diff, show_text_diff, update_project, Project, PROJECT_EXCLUDE_PATHS};
 
-use chrono;
 
 use rancher_client::models::IoCattleManagementv3Project;
 use reqwest_middleware::ClientBuilder;
