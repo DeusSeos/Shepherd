@@ -15,8 +15,18 @@ use rancher_client::{
         IoCattleManagementv3ProjectRoleTemplateBindingList,
         IoK8sApimachineryPkgApisMetaV1ObjectMeta,
     },
-    // models::io_cattle_managementv3_role_template::Context,
 };
+
+
+pub const PRTB_EXCLUDE_PATHS: &[&str] = &[
+    "metadata.creationTimestamp",
+    "metadata.finalizers",
+    "metadata.generation",
+    "metadata.managedFields",
+    "metadata.resourceVersion",
+    "metadata.selfLink",
+    "metadata.uid",
+];
 
 /// Get all project role template bindings from an endpoint using the provided configuration
 ///

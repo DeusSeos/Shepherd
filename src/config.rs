@@ -1,7 +1,11 @@
 use std::{collections::HashMap, fmt::Display};
 
+use rancher_client::models::{IoCattleManagementv3Cluster, IoCattleManagementv3Project, IoCattleManagementv3ProjectRoleTemplateBinding, IoCattleManagementv3RoleTemplate};
+use serde::{Deserialize, Serialize};
+
 use crate::{cluster::Cluster, project::Project, prtb::ProjectRoleTemplateBinding, rt::RoleTemplate};
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ClusterConfig {
     pub cluster: Cluster,
     pub role_templates: Vec<RoleTemplate>,
@@ -26,3 +30,13 @@ impl Display for ClusterConfig {
         Ok(())
     }
 }
+
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct RancherClusterConfig {
+    pub cluster: IoCattleManagementv3Cluster,
+    pub role_templates: Vec<IoCattleManagementv3RoleTemplate>,
+    /// Map from project ID → (project, its role‐template‐bindings)
+    pub projects: HashMap<String, (IoCattleManagementv3Project, Vec<IoCattleManagementv3ProjectRoleTemplateBinding>)>,
+}
+

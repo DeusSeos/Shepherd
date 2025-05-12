@@ -112,7 +112,7 @@ impl TryFrom<IoCattleManagementv3Cluster> for Cluster {
 
     fn try_from(value: IoCattleManagementv3Cluster) -> Result<Self, Self::Error> {
         let metadata: IoK8sApimachineryPkgApisMetaV1ObjectMeta =
-            *value.metadata.ok_or("missing metadata")?;
+            value.metadata.ok_or("missing metadata")?;
         let spec: IoCattleManagementv3ClusterSpec = *value.spec;
 
         Ok(Cluster {
@@ -139,7 +139,7 @@ impl TryFrom<Cluster> for IoCattleManagementv3Cluster {
         };
 
         Ok(IoCattleManagementv3Cluster {
-            metadata: Some(Box::new(metadata)),
+            metadata: Some(metadata),
             spec: Box::new(spec),
             ..Default::default()
         })
@@ -187,10 +187,10 @@ mod tests {
 
     fn sample_iocattle_cluster() -> IoCattleManagementv3Cluster {
         IoCattleManagementv3Cluster {
-            metadata: Some(Box::new(IoK8sApimachineryPkgApisMetaV1ObjectMeta {
+            metadata: Some(IoK8sApimachineryPkgApisMetaV1ObjectMeta {
                 name: Some("cluster-id".to_string()),
                 ..Default::default()
-            })),
+            }),
             spec: Box::new(IoCattleManagementv3ClusterSpec {
                 display_name: "Test Cluster".to_string(),
                 description: Some("A test cluster".to_string()),

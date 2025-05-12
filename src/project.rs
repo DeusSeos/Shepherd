@@ -33,14 +33,14 @@ use rancher_client::{
 use crate::{diff_boxed_hashmap_string_string, ResourceVersionMatch};
 
 pub const PROJECT_EXCLUDE_PATHS: &[&str] = &[
-    "status",
+    "metadata.creationTimestamp",
     "metadata.finalizers",
     "metadata.generateName",
-    "metadata.creationTimestamp",
     "metadata.generation",
     "metadata.managedFields",
     "metadata.resourceVersion",
     "spec.resourceQuota.usedLimit",
+    "status",
 ];
 
 /// Get all projects for a given namespace (cluster_id) from an endpoint using the provided configuration

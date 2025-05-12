@@ -6,20 +6,22 @@ pub mod project;
 pub mod prtb;
 pub mod rt;
 
-use config::ClusterConfig;
 use json_patch::diff;
-use rt::{get_role_templates, RoleTemplate};
-use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
+use serde::{de::DeserializeOwned, Serialize};
 use std::path::Path;
 use std::option::Option;
-
 use std::collections::{BTreeSet, HashMap};
 
 use cluster::Cluster;
-use project::Project;
-use prtb::ProjectRoleTemplateBinding;
+use config::{ClusterConfig, RancherClusterConfig};
+use project::{Project, PROJECT_EXCLUDE_PATHS};
+use prtb::{ProjectRoleTemplateBinding, PRTB_EXCLUDE_PATHS};
+use rt::{get_role_templates, RoleTemplate, RT_EXCLUDE_PATHS};
+
+use rancher_client::models::{IoCattleManagementv3Cluster, IoCattleManagementv3Project, IoCattleManagementv3ProjectRoleTemplateBinding, IoCattleManagementv3RoleTemplate};
 use rancher_client::apis::configuration::{ApiKey, Configuration};
+
 
 pub fn rancher_config_init(host: &str, token: &str) -> Configuration {
     let mut config = Configuration::new();
@@ -59,7 +61,7 @@ pub fn rancher_config_init(host: &str, token: &str) -> Configuration {
 // the file extension will be the format of the file
 // the folder names will be the ID of the object
 // the folder will be created if it does not exist
-// the function will return the path to the folder
+// the function will return the path to the folderm
 
 pub async fn download_current_configuration(
     configuration: &Configuration,
@@ -292,6 +294,100 @@ pub async fn download_current_configuration(
     }
 }
 
+pub async fn load_configuration_from_rancher(
+    configuration: &Configuration,
+    cluster_id: &str) -> RancherClusterConfig {
+
+    
+
+    // Get the current configuration from the Rancher API
+    let rancher_clusters = cluster::get_clusters(configuration)
+        .await
+        .map_err(|e| {
+            println!("Failed to get clusters: {:?}", e);
+            std::process::exit(1);
+        })
+        .unwrap();
+    let rancher_cluster = rancher_clusters
+        .items
+        .into_iter()
+        .find(|cluster| cluster.metadata.as_ref().and_then(|m| m.name.as_deref()) == Some(cluster_id))
+        .unwrap();
+
+    let rancher_role_templates = get_role_templates(
+        configuration,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    ).await.map_err(|e| {
+        println!("Failed to get role templates: {:?}", e);
+        std::process::exit(1);
+    }).unwrap();
+
+    let rrt: Vec<IoCattleManagementv3RoleTemplate> = rancher_role_templates.items.clone();
+
+    // let cluster_projects: HashMap<String, (IoCattleManagementv3Project, Vec<IoCattleManagementv3ProjectRoleTemplateBinding>)> = HashMap::new();
+
+    let rancher_projects = project::get_projects(
+        configuration,
+        cluster_id,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    ).await.map_err(|e| {
+        println!("Failed to get projects: {:?}", e);
+        std::process::exit(1);
+    }).unwrap();
+
+
+    let mut rancher_cluster_config = RancherClusterConfig {
+        cluster: rancher_cluster,
+        role_templates: rrt,
+        projects: HashMap::new(),
+    };
+
+    let rprojects: Vec<IoCattleManagementv3Project> = rancher_projects.items.clone();
+        
+    for rproject in rprojects {
+        let project = rproject.clone();
+        let project_id = project.metadata.as_ref().and_then(|m| m.name.as_deref()).unwrap();
+        let rancher_project_role_template_bindings =
+            prtb::get_namespaced_project_role_template_bindings(
+                configuration,
+                &project_id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ).await.map_err(|e| {
+            println!("Failed to get project role template bindings: {:?}", e);
+            std::process::exit(1);
+        }).unwrap();
+        let rprtbs: Vec<IoCattleManagementv3ProjectRoleTemplateBinding> = rancher_project_role_template_bindings.items.clone();
+        
+        rancher_cluster_config.projects.insert(
+            project_id.to_string(),
+            (project, rprtbs),
+        );
+    }
+
+
+    return rancher_cluster_config;
+
+    }
+
+
+
+
+
 // load the entire configuration from the base path
 ///
 /// # Arguments
@@ -495,62 +591,63 @@ pub async fn load_configuration(
 /// # Returns
 /// * Vec<Value>: The diffs between the current state and the desired state
 pub fn compute_cluster_diff(
-    current_state: &ClusterConfig,
-    desired_state: &ClusterConfig,
+    current_state: &Value,
+    desired_state: &Value,
 ) -> Vec<Value> {
-    // create a new cluster object
-    let cluster = current_state.cluster.clone();
+
+    // create a new rancher cluster object
+    // convert to RancherClusterConfig
+    let current_state: RancherClusterConfig = serde_json::from_value(current_state.clone()).unwrap();
+    let desired_state: RancherClusterConfig = serde_json::from_value(desired_state.clone()).unwrap();
+
+
+    // let cluster = current_state.cluster.clone();
     // create a new role template object
-    let role_template = current_state.role_templates.clone();
+    let c_role_template = current_state.role_templates.clone();
     // create a new project object
-    let project = current_state.projects.clone();
+    let c_project = current_state.projects.clone();
 
     let mut patches = Vec::new();
 
     // loop through the role templates and compare them
-    for rt in &role_template {
+    for crt in &c_role_template {
         // check if the role template exists in the desired state
         if let Some(desired_rt) = desired_state
             .role_templates
             .iter()
-            .find(|drt| drt.id == rt.id)
-        {
+            .find(|drole_template| drole_template.metadata.as_ref().unwrap().name == crt.metadata.as_ref().unwrap().name) {
             // compute the diff between the current state and the desired state
             // convert the current state to a JSON value
-            let rt = serde_json::to_value(rt).unwrap();
-            // convert the desired state to a JSON value
-            let desired_rt = serde_json::to_value(desired_rt).unwrap();
-            let patch = create_json_patch::<RoleTemplate>(&rt, &desired_rt);
-            // add the patch to the patches vector
+            let mut crtv = serde_json::to_value(crt).unwrap();
+            let mut drtv = serde_json::to_value(desired_rt).unwrap();
+            clean_up_value(&mut crtv, RT_EXCLUDE_PATHS);
+            clean_up_value(&mut drtv, RT_EXCLUDE_PATHS);
+            let patch = create_json_patch::<RoleTemplate>(&crtv, &drtv);
             patches.push(patch);
         }
     }
 
     // loop through the projects and compare them
-    for (project_id, (project, prtbs)) in &project {
+    for (c_project_id, (c_project, cprtbs)) in &c_project {
         // check if the project exists in the desired state
-        if let Some((desired_project, desired_prtbs)) = desired_state.projects.get(project_id) {
-            // convert the current state to a JSON value
-            let project = serde_json::to_value(project).unwrap();
-            // convert the desired state to a JSON value
-            let desired_project = serde_json::to_value(desired_project).unwrap();
-            // compute the diff between the current state and the desired state
-            let patch = create_json_patch::<Project>(&project, &desired_project);
-            // apply the patch to the current state
+        if let Some((d_project, dprtbs)) = desired_state.projects.get(c_project_id) {
+
+            let mut cpv = serde_json::to_value(c_project).unwrap();
+            let mut dpv = serde_json::to_value(d_project).unwrap();
+            clean_up_value(&mut cpv, PROJECT_EXCLUDE_PATHS);
+            clean_up_value(&mut dpv, PROJECT_EXCLUDE_PATHS);
+            let patch = create_json_patch::<Project>(&cpv, &dpv);
             patches.push(patch);
 
             // loop through the project role template bindings and compare them
-            for prtb in prtbs {
+            for cprtb in cprtbs {
                 // check if the project role template binding exists in the desired state
-                if let Some(desired_prtb) = desired_prtbs.iter().find(|dprtb| dprtb.id == prtb.id) {
-                    // convert the current state to a JSON value
-                    let prtb = serde_json::to_value(prtb).unwrap();
-                    // convert the desired state to a JSON value
-                    let desired_prtb = serde_json::to_value(desired_prtb).unwrap();
-                    // compute the diff between the current state and the desired state
-                    let patch =
-                        create_json_patch::<ProjectRoleTemplateBinding>(&prtb, &desired_prtb);
-                    // add the patch to the patches vector
+                if let Some(desired_prtb) = dprtbs.iter().find(|dprtb| dprtb.metadata.as_ref().unwrap().name == cprtb.metadata.as_ref().unwrap().name) {
+                    let mut cprtbv = serde_json::to_value(cprtb).unwrap();
+                    let mut dprtbv = serde_json::to_value(desired_prtb).unwrap();
+                    clean_up_value(&mut cprtbv, PRTB_EXCLUDE_PATHS);
+                    clean_up_value(&mut dprtbv, PRTB_EXCLUDE_PATHS);
+                    let patch = create_json_patch::<ProjectRoleTemplateBinding>(&cprtbv, &dprtbv);
                     patches.push(patch);
                 }
             }

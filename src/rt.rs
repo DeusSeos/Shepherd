@@ -14,6 +14,18 @@ use rancher_client::{
     },
 };
 
+pub const RT_EXCLUDE_PATHS: &[&str] = &[
+    "metadata.creationTimestamp",
+    "metadata.finalizers",
+    "metadata.generation",
+    "metadata.managedFields",
+    "metadata.resourceVersion",
+    "metadata.selfLink",
+    "metadata.uid",
+];
+
+
+
 /// Get all role templates from an endpoint using the provided configuration
 ///
 /// # Arguments
