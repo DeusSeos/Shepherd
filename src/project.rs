@@ -561,7 +561,6 @@ pub fn show_project_diff(project_a: &Project, project_b: &IoCattleManagementv3Pr
     );
 }
 
-/// Compare two projects and return the diff
 
 #[cfg(test)]
 mod tests {
@@ -604,7 +603,6 @@ mod tests {
                 container_default_resource_limit: None,
                 namespace_default_resource_quota: None,
                 resource_quota: None,
-                ..Default::default()
             }),
             ..Default::default()
         }

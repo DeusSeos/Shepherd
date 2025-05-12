@@ -12,7 +12,7 @@ use rt::{get_role_templates, RoleTemplate};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 use std::path::Path;
-use std::{option::Option, path::PathBuf};
+use std::option::Option;
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -63,7 +63,7 @@ pub fn rancher_config_init(host: &str, token: &str) -> Configuration {
 
 pub async fn download_current_configuration(
     configuration: &Configuration,
-    path: &PathBuf,
+    path: &Path,
     file_format: &FileFormat,
 ) {
     // Get the current configuration from the Rancher API
@@ -302,7 +302,7 @@ pub async fn download_current_configuration(
 /// # Returns
 /// `Option<ClusterConfig>`: The configuration object
 pub async fn load_configuration(
-    path: &PathBuf,
+    path: &Path,
     endpoint_url: &str,
     cluster_id: &str,
     file_format: &FileFormat,
@@ -572,7 +572,7 @@ pub fn compute_cluster_diff(
 /// `Project`: The project object
 ///
 pub async fn load_project(
-    base_path: &PathBuf,
+    base_path: &Path,
     endpoint_url: &str,
     cluster_id: &str,
     project_id: &str,
