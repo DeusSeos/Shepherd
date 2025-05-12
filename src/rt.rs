@@ -30,18 +30,24 @@ use rancher_client::{
 ///
 pub async fn get_role_templates(
     configuration: &Configuration,
+    field_selector: Option<&str>,
+    label_selector: Option<&str>,
+    limit: Option<i32>,
+    resource_version: Option<&str>,
+    resource_version_match: Option<&str>,
+    continue_: Option<&str>,
 ) -> Result<IoCattleManagementv3RoleTemplateList, Error<ListManagementCattleIoV3RoleTemplateError>>
 {
     let result = list_management_cattle_io_v3_role_template(
         configuration,
         None,
         None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
+        continue_,
+        field_selector,
+        label_selector,
+        limit,
+        resource_version,
+        resource_version_match,
         None,
         None,
         None,
@@ -49,7 +55,15 @@ pub async fn get_role_templates(
     .await;
 
     match result {
-        Err(e) => Err(e),
+        Err(e) => {
+            // TODO: Handle specific error cases
+            match e {
+                _ => {
+                    // Handle other errors
+                    Err(e)
+                }
+            }
+        },
         Ok(response_content) => {
             // Match on the status code and deserialize accordingly
             match response_content.status {
@@ -153,8 +167,7 @@ impl TryFrom<IoCattleManagementv3RoleTemplate> for RoleTemplate {
     type Error = &'static str;
 
     fn try_from(value: IoCattleManagementv3RoleTemplate) -> Result<Self, Self::Error> {
-        let metadata: IoK8sApimachineryPkgApisMetaV1ObjectMeta =
-            *value.metadata.ok_or("missing metadata")?;
+        let metadata: IoK8sApimachineryPkgApisMetaV1ObjectMeta = value.metadata.ok_or("missing metadata")?;
 
         let context = value.context;
         let administrative: Option<bool> = value.administrative;
@@ -221,7 +234,7 @@ impl TryFrom<RoleTemplate> for IoCattleManagementv3RoleTemplate {
             hidden,
             kind: Some("RoleTemplate".to_string()),
             locked,
-            metadata: Some(Box::new(metadata)),
+            metadata: Some(metadata),
             project_creator_default,
             role_template_names,
             rules,
@@ -284,11 +297,11 @@ mod tests {
     use super::*;
     use std::convert::TryFrom;
 
-    fn sample_metadata(name: &str) -> Box<IoK8sApimachineryPkgApisMetaV1ObjectMeta> {
-        Box::new(IoK8sApimachineryPkgApisMetaV1ObjectMeta {
+    fn sample_metadata(name: &str) -> IoK8sApimachineryPkgApisMetaV1ObjectMeta {
+        IoK8sApimachineryPkgApisMetaV1ObjectMeta {
             name: Some(name.to_string()),
             ..Default::default()
-        })
+        }
     }
 
     fn sample_role_template() -> RoleTemplate {

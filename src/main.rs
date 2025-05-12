@@ -1,9 +1,9 @@
 #![allow(unused_variables)]
 #![allow(unused_imports)]
 
-use rancher_cac::{download_current_configuration, load_project, rancher_config_init, remove_path_and_return, create_json_patch, FileFormat};
+use rancher_cac::{clean_up_value, create_json_patch, download_current_configuration, load_configuration, load_project, rancher_config_init, FileFormat, ResourceVersionMatch};
 use rancher_cac::git::{commit_changes, init_git_repo_with_main_branch, push_repo_to_remote};
-use rancher_cac::project::{clean_up_project, update_project, find_project, show_project_diff, show_text_diff, Project};
+use rancher_cac::project::{find_project, get_projects, show_project_diff, show_text_diff, update_project, Project, PROJECT_EXCLUDE_PATHS};
 
 use chrono;
 
@@ -11,6 +11,8 @@ use rancher_client::models::IoCattleManagementv3Project;
 use reqwest_middleware::ClientBuilder;
 use serde_json::json;
 
+
+/*
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create configuration using
@@ -39,7 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create a file format to save the configuration in
     let file_format = FileFormat::Yaml;
 
-    let download = false;
+    let download = true;
 
     if download {
         // Download the current configuration from the Rancher API
@@ -106,8 +108,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut live_project_value: serde_json::Value = serde_json::to_value(live_rancher_project).unwrap();
         let mut loaded_project_value: serde_json::Value = serde_json::to_value(loaded_rancher_project).unwrap();
 
-        clean_up_project(&mut live_project_value);
-        clean_up_project(&mut loaded_project_value);
+        clean_up_value(&mut live_project_value, PROJECT_EXCLUDE_PATHS);
+        clean_up_value(&mut loaded_project_value, PROJECT_EXCLUDE_PATHS);
 
         // println!("live up {:#?}", live_project_value);
         // println!("loaded up {:#?}", loaded_project_value);
@@ -125,6 +127,73 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // push the repo to the remote
     // push_repo_to_remote(&path, &remote_url).unwrap();
+
+    Ok(())
+}
+*/
+
+
+
+use rancher_client::apis::management_cattle_io_v3_api::{list_management_cattle_io_v3_namespaced_project, read_management_cattle_io_v3_namespaced_project};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>>  {
+    // 1️⃣ build your config (fill in base_path / api_key as appropriate)
+    let mut configuration = rancher_config_init(
+        "https://rancher.rd.localhost",
+        "token-xxzn4:mlcl7q4m2vl6mq8hfzdffh5f5fh4wfzqqhzbm52bqzkpmhdg2c7bf7",
+    );
+
+    // modify the configuration client to allow self-signed certificates
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build()
+        .unwrap();
+
+    configuration.client = ClientBuilder::new(client).build();
+
+    // // // 2️⃣ call with a fieldSelector
+    // let resp = list_management_cattle_io_v3_namespaced_project(
+    //     &configuration,
+    //     "local",               // namespace
+    //     None,                  // pretty
+    //     None,                  // allow_watch_bookmarks
+    //     None,                  // continue
+    //     None, // field_selector
+    //     Some("another=two"),                  // label_selector
+    //     None, None, None, None, None, None,
+    // )
+    // .await?;
+
+
+    // // 2️⃣ call with resourceVersionMatch and resourceVersion
+    // let resp = get_projects(
+    //     &configuration,
+    //     "local",                        // cluster_id
+    //     None,                           // field_selector
+    //     None,                           // label_selector
+    //     None,                          // limit
+    //     Some("1311731"),                           // resource_version
+    //     Some(ResourceVersionMatch::Exact), // resource_version_match
+    //     None,                          // continue
+    // )
+    // .await?;
+
+    // // 2️⃣ call with resourceVersion 
+    // // let resp = read_management_cattle_io_v3_namespaced_project(&configuration, "p-w82pc" , "local", Some("true"), Some("1288128") ).await?;
+
+
+    // println!("{:#?}", resp);
+
+    // load the cluster config
+    let path = std::path::PathBuf::from("/Users/dc/Documents/Rust/rancher_config");
+    let endpoint_url = configuration.base_path.clone();
+    let file_format = FileFormat::Yaml;
+    let cluster_id = "local";
+
+    let cluster = load_configuration(&path, &endpoint_url, cluster_id, &file_format)
+        .await.map(|cluster_config| cluster_config.map(|c| println!( "{}", c)));
+
 
     Ok(())
 }

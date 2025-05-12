@@ -5,13 +5,15 @@ use reqwest::StatusCode;
 
 use rancher_client::{
     apis::management_cattle_io_v3_api::{
-      list_management_cattle_io_v3_namespaced_project_role_template_binding, ListManagementCattleIoV3NamespacedProjectRoleTemplateBindingError,
-      list_management_cattle_io_v3_project_role_template_binding_for_all_namespaces, ListManagementCattleIoV3ProjectRoleTemplateBindingForAllNamespacesError,
+        list_management_cattle_io_v3_namespaced_project_role_template_binding,
+        list_management_cattle_io_v3_project_role_template_binding_for_all_namespaces,
+        ListManagementCattleIoV3NamespacedProjectRoleTemplateBindingError,
+        ListManagementCattleIoV3ProjectRoleTemplateBindingForAllNamespacesError,
     },
     models::{
-
-        IoCattleManagementv3ProjectRoleTemplateBinding, IoCattleManagementv3ProjectRoleTemplateBindingList,
-         IoK8sApimachineryPkgApisMetaV1ObjectMeta,
+        IoCattleManagementv3ProjectRoleTemplateBinding,
+        IoCattleManagementv3ProjectRoleTemplateBindingList,
+        IoK8sApimachineryPkgApisMetaV1ObjectMeta,
     },
     // models::io_cattle_managementv3_role_template::Context,
 };
@@ -32,24 +34,41 @@ use rancher_client::{
 ///
 pub async fn get_project_role_template_bindings(
     configuration: &Configuration,
-) -> Result<IoCattleManagementv3ProjectRoleTemplateBindingList, Error<ListManagementCattleIoV3ProjectRoleTemplateBindingForAllNamespacesError>> {
+    field_selector: Option<&str>,
+    label_selector: Option<&str>,
+    limit: Option<i32>,
+    resource_version: Option<&str>,
+    resource_version_match: Option<&str>,
+    continue_: Option<&str>,
+) -> Result<
+    IoCattleManagementv3ProjectRoleTemplateBindingList,
+    Error<ListManagementCattleIoV3ProjectRoleTemplateBindingForAllNamespacesError>,
+> {
     let result = list_management_cattle_io_v3_project_role_template_binding_for_all_namespaces(
         configuration,
         None,
+        continue_,
+        field_selector,
+        label_selector,
+        limit,
         None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
+        resource_version,
+        resource_version_match,
         None,
         None,
         None,
     )
     .await;
     match result {
-        Err(e) => Err(e),
+        Err(e) => {
+            // TODO: Handle specific error cases
+            match e {
+                _ => {
+                    // Handle other errors
+                    Err(e)
+                }
+            }
+        },
         Ok(response_content) => {
             // Match on the status code and deserialize accordingly
             match response_content.status {
@@ -81,7 +100,6 @@ pub async fn get_project_role_template_bindings(
     }
 }
 
-
 /// Get all project role template bindings from a namespace using the provided configuration
 ///
 /// # Arguments
@@ -99,25 +117,42 @@ pub async fn get_project_role_template_bindings(
 pub async fn get_namespaced_project_role_template_bindings(
     configuration: &Configuration,
     project_id: &str,
-) -> Result<IoCattleManagementv3ProjectRoleTemplateBindingList, Error<ListManagementCattleIoV3NamespacedProjectRoleTemplateBindingError>> {
+    field_selector: Option<&str>,
+    label_selector: Option<&str>,
+    limit: Option<i32>,
+    resource_version: Option<&str>,
+    resource_version_match: Option<&str>,
+    continue_: Option<&str>,
+) -> Result<
+    IoCattleManagementv3ProjectRoleTemplateBindingList,
+    Error<ListManagementCattleIoV3NamespacedProjectRoleTemplateBindingError>,
+> {
     let result = list_management_cattle_io_v3_namespaced_project_role_template_binding(
         configuration,
         project_id,
         None,
         None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
+        continue_,
+        field_selector,
+        label_selector,
+        limit,
+        resource_version,
+        resource_version_match,
         None,
         None,
         None,
     )
     .await;
     match result {
-        Err(e) => Err(e),
+        Err(e) => {
+            // TODO: Handle specific error cases
+            match e {
+                _ => {
+                    // Handle other errors
+                    Err(e)
+                }
+            }
+        },
         Ok(response_content) => {
             // Match on the status code and deserialize accordingly
             match response_content.status {
@@ -149,21 +184,42 @@ pub async fn get_namespaced_project_role_template_bindings(
     }
 }
 
-
-
-
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ProjectRoleTemplateBinding {
-    /// The name of the project role template binding (typically the Kubernetes metadata.name).
-    pub id: String,
+    // annotations: Option<std::collections::HashMap<String, String>>,
+    /// Annotations applied to the project role template binding.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<std::collections::HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_principal_name: Option<String>,
+    /// The name of the project role template binding (typically the Kubernetes metadata.name).
+    pub id: String,
+
+    /// Labels applied to the project role template binding
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub labels: Option<std::collections::HashMap<String, String>>,
+
+    /// the project (namespace) the project role template exists in
+    pub namespace: String,
+
+    /// The name of the project the project role template is bound to (cluster-id:project-id)
     pub project_name: String,
+
     pub role_template_name: String,
+
+    /// An opaque value that represents the internal version of this object that can be used by clients to determine when objects have changed. May be used for optimistic concurrency, change detection, and the watch operation on a resource or set of resources. Clients must treat these values as opaque and passed unmodified back to the server. They may only be valid for a particular resource or set of resources.  Populated by the system. Read-only. Value must be treated as opaque by clients and . More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resource_version: Option<String>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_account: Option<String>,
+
+    /// The UID of the project. This cannot be changed. Rancher will set this value when the project is created.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uid: Option<String>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -172,24 +228,34 @@ pub struct ProjectRoleTemplateBinding {
 
 impl ProjectRoleTemplateBinding {
     pub fn new(
-        id: String,
+        annotations: Option<std::collections::HashMap<String, String>>,
         group_name: Option<String>,
         group_principal_name: Option<String>,
+        id: String,
+        labels: Option<std::collections::HashMap<String, String>>,
+        namespace: String,
         project_name: String,
+        uid: Option<String>,
         role_template_name: String,
+        resource_version: Option<String>,
         service_account: Option<String>,
         user_name: Option<String>,
-        user_principal_name: Option<String>
+        user_principal_name: Option<String>,
     ) -> Self {
         ProjectRoleTemplateBinding {
-            id,
+            annotations,
             group_name,
             group_principal_name,
+            id,
+            labels,
+            namespace,
             project_name,
             role_template_name,
+            resource_version,
             service_account,
+            uid,
             user_name,
-            user_principal_name
+            user_principal_name,
         }
     }
 }
@@ -197,9 +263,11 @@ impl ProjectRoleTemplateBinding {
 impl TryFrom<IoCattleManagementv3ProjectRoleTemplateBinding> for ProjectRoleTemplateBinding {
     type Error = &'static str;
 
-    fn try_from(value: IoCattleManagementv3ProjectRoleTemplateBinding) -> Result<Self, Self::Error> {
+    fn try_from(
+        value: IoCattleManagementv3ProjectRoleTemplateBinding,
+    ) -> Result<Self, Self::Error> {
         let metadata: IoK8sApimachineryPkgApisMetaV1ObjectMeta =
-            *value.metadata.ok_or("missing metadata")?;
+            value.metadata.ok_or("missing metadata")?;
 
         let id = metadata.name.ok_or("missing name")?;
 
@@ -212,8 +280,21 @@ impl TryFrom<IoCattleManagementv3ProjectRoleTemplateBinding> for ProjectRoleTemp
         let service_account = value.service_account;
         let user_name = value.user_name;
         let user_principal_name = value.user_principal_name;
+        let annotations = metadata.annotations.map(|a| {
+            a.into_iter()
+                .map(|(k, v)| (k, v))
+                .collect::<std::collections::HashMap<String, String>>()
+        });
 
-        
+        let labels = metadata.labels.map(|a| {
+            a.into_iter()
+                .map(|(k, v)| (k, v))
+                .collect::<std::collections::HashMap<String, String>>()
+        });
+        let namespace = metadata.namespace.unwrap_or_default();
+        let resource_version = metadata.resource_version;
+        let uid = metadata.uid;
+
         Ok(ProjectRoleTemplateBinding {
             id,
             group_name,
@@ -222,12 +303,15 @@ impl TryFrom<IoCattleManagementv3ProjectRoleTemplateBinding> for ProjectRoleTemp
             role_template_name,
             service_account,
             user_name,
-            user_principal_name
-            
+            user_principal_name,
+            annotations,
+            labels,
+            namespace,
+            resource_version,
+            uid,
         })
     }
 }
-
 
 impl TryFrom<ProjectRoleTemplateBinding> for IoCattleManagementv3ProjectRoleTemplateBinding {
     type Error = &'static str;
@@ -244,7 +328,7 @@ impl TryFrom<ProjectRoleTemplateBinding> for IoCattleManagementv3ProjectRoleTemp
             group_name: value.group_name,
             group_principal_name: value.group_principal_name,
             kind: Some("ProjectRoleTemplateBinding".to_string()),
-            metadata: Some(Box::new(metadata)),
+            metadata: Some(metadata),
             project_name: value.project_name,
             role_template_name: value.role_template_name,
             service_account: value.service_account,
@@ -253,7 +337,6 @@ impl TryFrom<ProjectRoleTemplateBinding> for IoCattleManagementv3ProjectRoleTemp
         })
     }
 }
-
 
 impl PartialEq<ProjectRoleTemplateBinding> for IoCattleManagementv3ProjectRoleTemplateBinding {
     fn eq(&self, other: &ProjectRoleTemplateBinding) -> bool {
@@ -270,7 +353,6 @@ impl PartialEq<ProjectRoleTemplateBinding> for IoCattleManagementv3ProjectRoleTe
             && self.user_principal_name == other.user_principal_name
     }
 }
-
 
 impl PartialEq<IoCattleManagementv3ProjectRoleTemplateBinding> for ProjectRoleTemplateBinding {
     fn eq(&self, other: &IoCattleManagementv3ProjectRoleTemplateBinding) -> bool {
@@ -290,9 +372,6 @@ impl PartialEq<IoCattleManagementv3ProjectRoleTemplateBinding> for ProjectRoleTe
     }
 }
 
-
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -307,6 +386,11 @@ mod tests {
             service_account: Some("service-account".to_string()),
             user_name: Some("user1".to_string()),
             user_principal_name: Some("userPrincipal".to_string()),
+            annotations: Some(std::collections::HashMap::new()),
+            labels: Some(std::collections::HashMap::new()),
+            namespace: "namespace-id".to_string(),
+            resource_version: Some("resource-version".to_string()),
+            uid: Some("uid".to_string()),
         }
     }
 
@@ -314,10 +398,10 @@ mod tests {
         IoCattleManagementv3ProjectRoleTemplateBinding {
             api_version: Some("management.cattle.io/v3".to_string()),
             kind: Some("ProjectRoleTemplateBinding".to_string()),
-            metadata: Some(Box::new(IoK8sApimachineryPkgApisMetaV1ObjectMeta {
+            metadata: Some(IoK8sApimachineryPkgApisMetaV1ObjectMeta {
                 name: Some("binding-id".to_string()),
                 ..Default::default()
-            })),
+            }),
             group_name: Some("group1".to_string()),
             group_principal_name: Some("groupPrincipal".to_string()),
             project_name: "project-id".to_string(),
@@ -355,10 +439,7 @@ mod tests {
         assert!(result.is_ok());
 
         let ioc = result.unwrap();
-        assert_eq!(
-            ioc.metadata.unwrap().name,
-            Some("binding-id".to_string())
-        );
+        assert_eq!(ioc.metadata.unwrap().name, Some("binding-id".to_string()));
         assert_eq!(ioc.group_name.as_deref(), Some("group1"));
     }
 

@@ -8,32 +8,31 @@ use serde_json::Value;
 use reqwest::StatusCode;
 
 use rancher_client::{
-    apis::management_cattle_io_v3_api::{
-        list_management_cattle_io_v3_namespaced_project, patch_management_cattle_io_v3_namespaced_project, ListManagementCattleIoV3NamespacedProjectError, PatchManagementCattleIoV3NamespacedProjectError
-    },
-    models::{
-        IoCattleManagementv3Project, IoCattleManagementv3ProjectList,
-        IoCattleManagementv3ProjectSpecContainerDefaultResourceLimit,
-        IoCattleManagementv3ProjectSpecNamespaceDefaultResourceQuota,
-        IoCattleManagementv3ProjectSpecResourceQuotaLimit, IoK8sApimachineryPkgApisMetaV1Patch,
-    },
-};
-use rancher_client::{
     apis::{
         configuration::Configuration,
         management_cattle_io_v3_api::{
+            list_management_cattle_io_v3_namespaced_project,
+            patch_management_cattle_io_v3_namespaced_project,
             read_management_cattle_io_v3_namespaced_project,
+            ListManagementCattleIoV3NamespacedProjectError,
+            PatchManagementCattleIoV3NamespacedProjectError,
             ReadManagementCattleIoV3NamespacedProjectError,
         },
         Error, ResponseContent,
     },
-    models::{self, IoCattleManagementv3ProjectSpec, IoK8sApimachineryPkgApisMetaV1ObjectMeta},
+    models::{
+        self, IoCattleManagementv3Project, IoCattleManagementv3ProjectList,
+        IoCattleManagementv3ProjectSpec,
+        IoCattleManagementv3ProjectSpecContainerDefaultResourceLimit,
+        IoCattleManagementv3ProjectSpecNamespaceDefaultResourceQuota,
+        IoCattleManagementv3ProjectSpecResourceQuotaLimit,
+        IoK8sApimachineryPkgApisMetaV1ObjectMeta, IoK8sApimachineryPkgApisMetaV1Patch,
+    },
 };
 
-use crate::{diff_boxed_hashmap_string_string, remove_path_and_return};
+use crate::{diff_boxed_hashmap_string_string, ResourceVersionMatch};
 
-
-const EXCLUDE_PATHS: &[&str] = &[
+pub const PROJECT_EXCLUDE_PATHS: &[&str] = &[
     "status",
     "metadata.finalizers",
     "metadata.generateName",
@@ -41,7 +40,8 @@ const EXCLUDE_PATHS: &[&str] = &[
     "metadata.generation",
     "metadata.managedFields",
     "metadata.resourceVersion",
-    "spec.resourceQuota.usedLimit",];
+    "spec.resourceQuota.usedLimit",
+];
 
 /// Get all projects for a given namespace (cluster_id) from an endpoint using the provided configuration
 ///
@@ -60,6 +60,12 @@ const EXCLUDE_PATHS: &[&str] = &[
 pub async fn get_projects(
     configuration: &Configuration,
     cluster_id: &str,
+    field_selector: Option<&str>,
+    label_selector: Option<&str>,
+    limit: Option<i32>,
+    resource_version: Option<&str>,
+    resource_version_match: Option<ResourceVersionMatch>,
+    continue_: Option<&str>,
 ) -> Result<IoCattleManagementv3ProjectList, Error<ListManagementCattleIoV3NamespacedProjectError>>
 {
     let result = list_management_cattle_io_v3_namespaced_project(
@@ -67,12 +73,12 @@ pub async fn get_projects(
         cluster_id,
         None,
         None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
+        continue_,
+        field_selector,
+        label_selector,
+        limit,
+        resource_version,
+        resource_version_match.map(|v| v.as_str()),
         None,
         None,
         None,
@@ -80,7 +86,15 @@ pub async fn get_projects(
     .await;
 
     match result {
-        Err(e) => Err(e),
+        Err(e) => {
+            // TODO: Handle specific error cases
+            match e {
+                _ => {
+                    // Handle other errors
+                    Err(e)
+                }
+            }
+        }
         Ok(response_content) => {
             // Match on the status code and deserialize accordingly
             match response_content.status {
@@ -171,7 +185,6 @@ pub async fn find_project(
     }
 }
 
-
 /// Update a project by its ID
 /// # Arguments
 /// * `configuration` - The configuration to use for the request
@@ -182,14 +195,13 @@ pub async fn find_project(
 /// * `IoCattleManagementv3Project` - The project
 /// # Errors
 /// * `Error<PatchManagementCattleIoV3NamespacedProjectError>` - The error that occurred while trying to patch the project
-/// 
+///
 pub async fn update_project(
     configuration: &Configuration,
     cluster_id: &str,
     project_id: &str,
     patch_value: Value,
 ) -> Result<IoCattleManagementv3Project, Error<PatchManagementCattleIoV3NamespacedProjectError>> {
-
     let patch_array = match patch_value {
         Value::Array(arr) => arr,
         _ => panic!("Expected patch to serialize to a JSON array"),
@@ -241,8 +253,6 @@ pub async fn update_project(
         }
     }
 }
-
-
 
 #[derive(Serialize, Deserialize, SerdeDiff, Debug, Clone, PartialEq)]
 pub struct Project {
@@ -392,18 +402,14 @@ impl TryFrom<Project> for IoCattleManagementv3Project {
         let metadata = IoK8sApimachineryPkgApisMetaV1ObjectMeta {
             name: Some(value.id.clone()),
             annotations: value.annotations.clone().map(|a| {
-                Box::new(
-                    a.into_iter()
-                        .map(|(k, v)| (k, v))
-                        .collect::<std::collections::HashMap<String, String>>(),
-                )
+                a.into_iter()
+                    .map(|(k, v)| (k, v))
+                    .collect::<std::collections::HashMap<String, String>>()
             }),
             labels: value.labels.clone().map(|a| {
-                Box::new(
-                    a.into_iter()
-                        .map(|(k, v)| (k, v))
-                        .collect::<std::collections::HashMap<String, String>>(),
-                )
+                a.into_iter()
+                    .map(|(k, v)| (k, v))
+                    .collect::<std::collections::HashMap<String, String>>()
             }),
             namespace: Some(value.namespace.clone()),
             resource_version: value.resource_version.clone(),
@@ -450,8 +456,6 @@ impl TryFrom<Project> for IoCattleManagementv3Project {
 
 impl PartialEq<Project> for IoCattleManagementv3Project {
     fn eq(&self, other: &Project) -> bool {
-        
-
         let metadata = match &self.metadata {
             Some(m) => m,
             None => return false,
@@ -477,19 +481,15 @@ impl PartialEq<Project> for IoCattleManagementv3Project {
         let namespace_quota = spec.namespace_default_resource_quota.as_ref();
 
         let annotations = other.annotations.clone().map(|a| {
-            Box::new(
-                a.into_iter()
-                    .map(|(k, v)| (k, v))
-                    .collect::<std::collections::HashMap<String, String>>(),
-            )
+            a.into_iter()
+                .map(|(k, v)| (k, v))
+                .collect::<std::collections::HashMap<String, String>>()
         });
 
         let labels = other.labels.clone().map(|a| {
-            Box::new(
-                a.into_iter()
-                    .map(|(k, v)| (k, v))
-                    .collect::<std::collections::HashMap<String, String>>(),
-            )
+            a.into_iter()
+                .map(|(k, v)| (k, v))
+                .collect::<std::collections::HashMap<String, String>>()
         });
 
         metadata.name.as_deref() == Some(&other.id)
@@ -552,45 +552,27 @@ pub fn show_project_diff(project_a: &Project, project_b: &IoCattleManagementv3Pr
 
     println!("\nAnnotation‑level diff:");
     diff_boxed_hashmap_string_string(
-        &rancher_project_a
+        rancher_project_a
             .metadata
             .as_ref()
-            .and_then(|m| m.annotations.clone()),
-        &project_b
+            .and_then(|m| m.annotations.as_ref()),
+        project_b
             .metadata
             .as_ref()
-            .and_then(|m| m.annotations.clone()),
+            .and_then(|m| m.annotations.as_ref()),
     );
 
     println!("\nLabel‑level diff:");
     diff_boxed_hashmap_string_string(
-        &rancher_project_a
+        rancher_project_a
             .metadata
             .as_ref()
-            .and_then(|m| m.labels.clone()),
-        &project_b.metadata.as_ref().and_then(|m| m.labels.clone()),
+            .and_then(|m| m.labels.as_ref()),
+        project_b.metadata.as_ref().and_then(|m| m.labels.as_ref()),
     );
 }
 
-
-
-
-
-
-/// clean up the project by removing the status and other fields defined in EXCLUDE_PATHS
-/// # Arguments
-/// * `project` - The project to clean up
-/// # Returns
-/// * `()` - Nothing
-/// # Errors
-pub fn clean_up_project(project: &mut Value) {
-
-    // remove the fields defined in EXCLUDE_PATHS
-    for path in EXCLUDE_PATHS {
-        remove_path_and_return(project, &path.split('.').collect::<Vec<_>>());
-    }
-}
-
+/// Compare two projects and return the diff
 
 #[cfg(test)]
 mod tests {
@@ -618,8 +600,8 @@ mod tests {
         IoCattleManagementv3Project {
             metadata: Some(models::IoK8sApimachineryPkgApisMetaV1ObjectMeta {
                 name: Some("proj-1".to_string()),
-                annotations: Some(Box::new(std::collections::HashMap::new())),
-                labels: Some(Box::new(std::collections::HashMap::new())),
+                annotations: Some(std::collections::HashMap::new()),
+                labels: Some(std::collections::HashMap::new()),
                 namespace: Some("cluster-1".to_string()),
                 resource_version: Some("5555".to_string()),
                 uid: Some("1234".to_string()),
