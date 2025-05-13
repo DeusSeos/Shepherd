@@ -1,14 +1,16 @@
 # Rancher Config-as-Code
 
-A configuration-as-code project for managing Rancher deployments and resources programmatically using Rust. This project aims to simplify and standardize Rancher configuration management across environments, promoting automation, reproducibility, and version control.
+A configuration-as-code software for managing Rancher deployments and resources programmatically written in Rust. This project aims to simplify and standardize Rancher configuration management across environments, promoting automation, reproducibility, and version control.
+
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/DeusSeos/rancher-cac)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 ## Features
 
-- Declarative configuration for Rancher clusters, projects, and workloads
+- Declarative configuration for Rancher projects, roletempales, and projectroletemplatebindings
 - Support for GitOps workflows
-- CLI and library interfaces (WIP)
 - Validation and dry-run modes
-- Integration with Rancher API
+- Integration with RK-API
 
 ## Project Goals
 
@@ -20,7 +22,7 @@ A configuration-as-code project for managing Rancher deployments and resources p
 
 - **Language:** Rust 🦀
 - **API:** Rancher v2.10
-- **Configuration Format:** YAML/JSON (planned)
+- **Configuration Format:** Y(A)ML/JSON/TOML
 
 ## Getting Started
 
@@ -40,4 +42,3 @@ cargo build --release
 ### Authors
 
 [Dominic Chua](https://github.com/DeusSeos)
-[Matthew Shen](https://github.com/Sariel1563)

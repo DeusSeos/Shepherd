@@ -1,4 +1,6 @@
 /rancher_client_crate
+.cargo/
+Cargo.lock
 
 
 # Added by cargo
