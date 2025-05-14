@@ -1,4 +1,4 @@
-use std::{collections::{BTreeSet, HashMap}, hash::Hash};
+use std::collections::{BTreeSet, HashMap};
 
 use json_patch::diff;
 use rancher_client::models::{IoCattleManagementv3Project, IoCattleManagementv3ProjectRoleTemplateBinding, IoCattleManagementv3RoleTemplate};
@@ -77,7 +77,7 @@ pub fn compute_cluster_diff(
                     clean_up_value(&mut dprtbv, PRTB_EXCLUDE_PATHS);
                     let patch = create_json_patch::<IoCattleManagementv3ProjectRoleTemplateBinding>(&cprtbv, &dprtbv);
                     let prtb_id = cprtb.metadata.as_ref().unwrap().name.clone().unwrap();
-                    if let Some(patch) = patch { patches.insert((ObjectType::ProjectRoleTemplateBinding, prtb_id, Some(cluster_id.clone())),patch); }
+                    if let Some(patch) = patch { patches.insert((ObjectType::ProjectRoleTemplateBinding, prtb_id, Some(c_project_id.clone())),patch); }
                 }
             }
         }

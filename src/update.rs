@@ -39,7 +39,7 @@ pub async fn compare_and_update_configurations(
                     .unwrap_or("<no-namespace>");
                 println!("  → project `{}` in namespace `{}`", object_id, ns);
                 // Here you own `diff_value`, so you can consume it:
-                update_project(configuration, &object_id, &ns, diff_value).await?;
+                update_project(configuration, &ns, &object_id, diff_value).await?;
             }
     
             ObjectType::RoleTemplate => {
@@ -52,7 +52,7 @@ pub async fn compare_and_update_configurations(
                     .as_deref()
                     .unwrap_or("<no-namespace>");
                 println!("  → prtb `{}` in namespace `{}`", object_id, ns);
-                update_project_role_template_binding(configuration, &object_id, &ns, diff_value).await?;
+                update_project_role_template_binding(configuration, &ns, &object_id, diff_value).await?;
             }
     
             _ => {

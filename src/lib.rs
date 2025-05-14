@@ -454,7 +454,6 @@ pub async fn load_configuration(
 
     // read the role templates
     let role_template_path = endpoint_path.join("roles");
-    println!("Role template path: {:?}", role_template_path);
 
     // check if the path exists
     if !role_template_path.exists() {

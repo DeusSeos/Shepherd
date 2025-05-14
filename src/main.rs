@@ -201,7 +201,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>  {
     let cluster_id = "local";
 
     
-    compare_and_update_configurations(&configuration, path, cluster_id, &file_format).await?;
+    let resp = compare_and_update_configurations(&configuration, path, cluster_id, &file_format).await;
+    println!("{:#?}", resp);
 
 
     Ok(())
