@@ -2,7 +2,7 @@
 
 A configuration-as-code software for managing Rancher deployments and resources programmatically written in Rust. This project aims to simplify and standardize Rancher configuration management across environments, promoting automation, reproducibility, and version control.
 
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/DeusSeos/rancher-cac)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/DeusSeos/Shepherd)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 ## Features
