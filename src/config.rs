@@ -42,7 +42,6 @@ pub struct RancherClusterConfig {
 
 
 // conversion from ClusterConfig to RancherClusterConfig
-
 impl TryFrom<ClusterConfig> for RancherClusterConfig {
     type Error = &'static str;
 

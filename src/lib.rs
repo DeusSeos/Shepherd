@@ -5,19 +5,22 @@ pub mod git;
 pub mod project;
 pub mod prtb;
 pub mod rt;
+pub mod file;
+pub mod diff;
+pub mod update;
 
-use json_patch::diff;
+use file::{file_extension_from_format, FileFormat};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use serde::{de::DeserializeOwned, Serialize};
 use std::path::Path;
 use std::option::Option;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 
 use cluster::Cluster;
 use config::{ClusterConfig, RancherClusterConfig};
-use project::{Project, PROJECT_EXCLUDE_PATHS};
-use prtb::{ProjectRoleTemplateBinding, PRTB_EXCLUDE_PATHS};
-use rt::{get_role_templates, RoleTemplate, RT_EXCLUDE_PATHS};
+use project::Project;
+use prtb::ProjectRoleTemplateBinding;
+use rt::{get_role_templates, RoleTemplate};
 
 use rancher_client::models::{IoCattleManagementv3Project, IoCattleManagementv3ProjectRoleTemplateBinding, IoCattleManagementv3RoleTemplate};
 use rancher_client::apis::configuration::{ApiKey, Configuration};
@@ -587,82 +590,6 @@ pub async fn load_configuration(
     Ok(Some(cluster_config))
 }
 
-/// compute the cluster diff between the current state and the desired state
-/// # Arguments
-/// * `current_state` - The current state of the cluster
-/// * `desired_state` - The desired state of the cluster
-/// # Returns
-/// * Vec<Value>: The diffs between the current state and the desired state
-pub fn compute_cluster_diff(
-    current_state: &Value,
-    desired_state: &Value,
-) -> Vec<Value> {
-
-    // create a new rancher cluster object
-    // convert to RancherClusterConfig
-
-    let current_state: RancherClusterConfig = serde_json::from_value(current_state.clone()).unwrap();
-
-    let desired_state: RancherClusterConfig = serde_json::from_value(desired_state.clone()).unwrap();
-
-
-
-    // let cluster = current_state.cluster.clone();
-    // create a new role template object
-    let c_role_template = current_state.role_templates.clone();
-    // create a new project object
-    let c_project = current_state.projects.clone();
-
-    let mut patches = Vec::new();
-
-    // loop through the role templates and compare them
-    for crt in &c_role_template {
-        // check if the role template exists in the desired state
-        if let Some(desired_rt) = desired_state
-            .role_templates
-            .iter()
-            .find(|drole_template| drole_template.metadata.as_ref().unwrap().name == crt.metadata.as_ref().unwrap().name) {
-            // compute the diff between the current state and the desired state
-            // convert the current state to a JSON value
-            let mut crtv = serde_json::to_value(crt).unwrap();
-            let mut drtv = serde_json::to_value(desired_rt).unwrap();
-            clean_up_value(&mut crtv, RT_EXCLUDE_PATHS);
-            clean_up_value(&mut drtv, RT_EXCLUDE_PATHS);
-            let patch = create_json_patch::<IoCattleManagementv3RoleTemplate>(&crtv, &drtv);
-            if let Some(patch) = patch { patches.push(patch) }
-        }
-    }
-
-    // loop through the projects and compare them
-    for (c_project_id, (c_project, cprtbs)) in &c_project {
-        // check if the project exists in the desired state
-        if let Some((d_project, dprtbs)) = desired_state.projects.get(c_project_id) {
-
-            let mut cpv = serde_json::to_value(c_project).unwrap();
-            let mut dpv = serde_json::to_value(d_project).unwrap();
-            clean_up_value(&mut cpv, PROJECT_EXCLUDE_PATHS);
-            clean_up_value(&mut dpv, PROJECT_EXCLUDE_PATHS);
-            // TODO: fix conversion from IoCattleManagementv3Project to Value to Project will cause errors bc of fields not matching ie clusterName -> clusterName -> cluster_name
-            let patch = create_json_patch::<IoCattleManagementv3Project>(&cpv, &dpv);
-            if let Some(patch) = patch { patches.push(patch) }
-
-            // loop through the project role template bindings and compare them
-            for cprtb in cprtbs {
-                // check if the project role template binding exists in the desired state
-                if let Some(desired_prtb) = dprtbs.iter().find(|dprtb| dprtb.metadata.as_ref().unwrap().name == cprtb.metadata.as_ref().unwrap().name) {
-                    let mut cprtbv = serde_json::to_value(cprtb).unwrap();
-                    let mut dprtbv = serde_json::to_value(desired_prtb).unwrap();
-                    clean_up_value(&mut cprtbv, PRTB_EXCLUDE_PATHS);
-                    clean_up_value(&mut dprtbv, PRTB_EXCLUDE_PATHS);
-                    let patch = create_json_patch::<IoCattleManagementv3ProjectRoleTemplateBinding>(&cprtbv, &dprtbv);
-                    if let Some(patch) = patch { patches.push(patch) };
-                }
-            }
-        }
-    }
-
-    patches
-}
 
 /// load a specific project configuration from the base path
 ///
@@ -676,7 +603,7 @@ pub fn compute_cluster_diff(
 /// `Project`: The project object
 ///
 #[async_backtrace::framed]
-pub async fn load_project(
+async fn load_project(
     base_path: &Path,
     endpoint_url: &str,
     cluster_id: &str,
@@ -746,71 +673,6 @@ fn remove_path_and_return(value: &mut Value, path: &[&str]) -> Option<Value> {
     current.as_object_mut().unwrap().remove(last_key)
 }
 
-/// Compare two optional annotation‐maps and print per‐key changes.
-/// # Arguments
-/// * `a` - The first optional annotation‐map.
-/// * `b` - The second optional annotation‐map.
-///
-fn diff_boxed_hashmap_string_string(
-    a: Option<&HashMap<String, String>>,
-    b: Option<&HashMap<String, String>>,
-) {
-    // // Treat None as empty map
-    // let binding = HashMap::new();
-    // let ma = a.unwrap_or(binding);
-    // let binding = HashMap::new();
-    // let mb = b.unwrap_or(binding);
-
-    let ma = a.as_ref().unwrap();
-    let mb = b.as_ref().unwrap();
-
-    // Collect all keys
-    let keys: BTreeSet<_> = ma.keys().chain(mb.keys()).collect();
-
-    for key in keys {
-        match (ma.get(key), mb.get(key)) {
-            (Some(old), Some(new)) if old != new => {
-                println!("Hashmap changed  {}: {:?} → {:?}", key, old, new);
-            }
-            (None, Some(new)) => {
-                println!("Hashmap added    {}: {:?}", key, new);
-            }
-            (Some(old), None) => {
-                println!("Hashmap removed  {}: {:?}", key, old);
-            }
-            _ => { /* unchanged */ }
-        }
-    }
-}
-
-/// Create a JSON patch between two JSON values.
-/// # Arguments
-/// * `current_state` - The current state of the JSON object.
-/// * `desired_state` - The desired state of the JSON object.
-/// # Returns
-/// * A JSON value representing the patch.
-///
-pub fn create_json_patch<T>(current_state: &Value, desired_state: &Value) -> Option<Value>
-where
-    T: Serialize + DeserializeOwned,
-{
-    // enforce conversion to IoCattleManagementv3Project
-    let current: T = serde_json::from_value(current_state.clone()).unwrap();
-    let desired: T = serde_json::from_value(desired_state.clone()).unwrap();
-
-    // Serialize back to JSON values
-    let current_value = serde_json::to_value(current).unwrap();
-    let desired_value = serde_json::to_value(desired).unwrap();
-
-    // Compute the JSON patch
-    let patch = diff(&current_value, &desired_value);
-
-    // Convert the patch to a JSON value if it isn't empty
-    if !patch.is_empty() {
-        return Some(serde_json::to_value(patch).unwrap())
-    }
-    None
-}
 
 /// serialize the object to the file format specified
 pub fn serialize_object<T: serde::Serialize>(object: &T, file_format: &FileFormat) -> String {
@@ -852,44 +714,7 @@ pub fn deserialize_object<T: serde::de::DeserializeOwned>(
     }
 }
 
-pub fn file_format_from_extension(extension: &str) -> FileFormat {
-    match extension {
-        "yml" => FileFormat::Yaml,
-        "json" => FileFormat::Json,
-        "toml" => FileFormat::Toml,
-        _ => FileFormat::Json,
-    }
-}
 
-pub fn file_format_from_path(path: &Path) -> FileFormat {
-    match path.extension() {
-        Some(ext) => file_format_from_extension(ext.to_str().unwrap()),
-        None => FileFormat::Json,
-    }
-}
-
-pub fn file_extension_from_format(file_format: &FileFormat) -> String {
-    match file_format {
-        FileFormat::Yaml => "yml".to_string(),
-        FileFormat::Json => "json".to_string(),
-        FileFormat::Toml => "toml".to_string(),
-    }
-}
-
-pub fn file_format(file_format: &str) -> FileFormat {
-    match file_format {
-        "yaml" => FileFormat::Yaml,
-        "json" => FileFormat::Json,
-        "toml" => FileFormat::Toml,
-        _ => FileFormat::Json,
-    }
-}
-
-pub enum FileFormat {
-    Yaml,
-    Json,
-    Toml,
-}
 
 pub enum ResourceVersionMatch {
     Exact,
@@ -921,3 +746,21 @@ impl std::str::FromStr for ResourceVersionMatch {
         }
     }
 }
+
+
+/// The type of object to be updated in Rancher.
+///
+/// This enum represents the different types of objects that can be updated in Rancher. It includes:
+/// - `Cluster`: Represents a cluster object.
+/// - `Project`: Represents a project object.
+/// - `RoleTemplate`: Represents a role template object.
+/// - `ProjectRoleTemplateBinding`: Represents a project-role-template binding object.
+///
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ObjectType {
+    Cluster,
+    Project,
+    RoleTemplate,
+    ProjectRoleTemplateBinding,
+}
+

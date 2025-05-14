@@ -30,7 +30,9 @@ use rancher_client::{
     },
 };
 
-use crate::{diff_boxed_hashmap_string_string, ResourceVersionMatch};
+use crate::ResourceVersionMatch;
+
+use crate::diff::diff_boxed_hashmap_string_string;
 
 pub const PROJECT_EXCLUDE_PATHS: &[&str] = &[
     "metadata.creationTimestamp",

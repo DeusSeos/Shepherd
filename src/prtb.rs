@@ -1,22 +1,27 @@
 use serde::{Deserialize, Serialize};
 
-use rancher_client::apis::{configuration::Configuration, Error, ResponseContent};
 use reqwest::StatusCode;
 
 use rancher_client::{
-    apis::management_cattle_io_v3_api::{
-        list_management_cattle_io_v3_namespaced_project_role_template_binding,
-        list_management_cattle_io_v3_project_role_template_binding_for_all_namespaces,
-        ListManagementCattleIoV3NamespacedProjectRoleTemplateBindingError,
-        ListManagementCattleIoV3ProjectRoleTemplateBindingForAllNamespacesError,
+    apis::{
+        configuration::Configuration,
+        management_cattle_io_v3_api::{
+            list_management_cattle_io_v3_namespaced_project_role_template_binding,
+            list_management_cattle_io_v3_project_role_template_binding_for_all_namespaces,
+            patch_management_cattle_io_v3_namespaced_project_role_template_binding,
+            ListManagementCattleIoV3NamespacedProjectRoleTemplateBindingError,
+            ListManagementCattleIoV3ProjectRoleTemplateBindingForAllNamespacesError,
+            PatchManagementCattleIoV3NamespacedProjectRoleTemplateBindingError,
+        },
+        Error, ResponseContent,
     },
     models::{
         IoCattleManagementv3ProjectRoleTemplateBinding,
         IoCattleManagementv3ProjectRoleTemplateBindingList,
-        IoK8sApimachineryPkgApisMetaV1ObjectMeta,
+        IoK8sApimachineryPkgApisMetaV1ObjectMeta, IoK8sApimachineryPkgApisMetaV1Patch,
     },
 };
-
+use serde_json::Value;
 
 pub const PRTB_EXCLUDE_PATHS: &[&str] = &[
     "metadata.creationTimestamp",
@@ -75,7 +80,7 @@ pub async fn get_project_role_template_bindings(
         Err(e) => {
             // TODO: Handle specific error cases
             Err(e)
-        },
+        }
         Ok(response_content) => {
             // Match on the status code and deserialize accordingly
             match response_content.status {
@@ -155,7 +160,7 @@ pub async fn get_namespaced_project_role_template_bindings(
         Err(e) => {
             // TODO: Handle specific error cases
             Err(e)
-        },
+        }
         Ok(response_content) => {
             // Match on the status code and deserialize accordingly
             match response_content.status {
@@ -180,6 +185,88 @@ pub async fn get_namespaced_project_role_template_bindings(
                             }))
                         }
                         Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[async_backtrace::framed]
+pub async fn update_project_role_template_binding(
+    configuration: &Configuration,
+    project_id: &str,
+    prtb_id: &str,
+    patch_value: Value,
+) -> Result<
+    IoCattleManagementv3ProjectRoleTemplateBinding,
+    Error<PatchManagementCattleIoV3NamespacedProjectRoleTemplateBindingError>,
+> {
+    let patch_array = match patch_value {
+        Value::Array(arr) => arr,
+        _ => panic!("Expected patch to serialize to a JSON array"),
+    };
+
+    let k8s_patch = IoK8sApimachineryPkgApisMetaV1Patch::Array(patch_array);
+
+    let result = patch_management_cattle_io_v3_namespaced_project_role_template_binding(
+        configuration,
+        prtb_id,
+        project_id,
+        Some(k8s_patch),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+    match result {
+        Err(e) => Err(e),
+        Ok(response_content) => {
+            // Match on the status code and deserialize accordingly
+            match response_content.status {
+                StatusCode::OK => {
+                    // Try to deserialize the content into IoCattleManagementv3RoleTemplate (Status200 case)
+                    match serde_json::from_str(&response_content.content) {
+                        Ok(entity) => Ok(entity),
+                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
+                    }
+                }
+                StatusCode::NOT_FOUND => {
+                    // Try to deserialize the content into IoCattleManagementv3RoleTemplate (NotFound case)
+                    match serde_json::from_str(&response_content.content) {
+                        Ok(entity) => Ok(entity),
+                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
+                    }
+                }
+                StatusCode::BAD_REQUEST => {
+                    // Try to deserialize the content into IoCattleManagementv3RoleTemplate (BadRequest case)
+                    match serde_json::from_str(&response_content.content) {
+                        Ok(entity) => Ok(entity),
+                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
+                    }
+                }
+                StatusCode::NOT_IMPLEMENTED => {
+                    // Try to deserialize the content into IoCattleManagementv3RoleTemplate (NotImplemented case)
+                    match serde_json::from_str(&response_content.content) {
+                        Ok(entity) => Ok(entity),
+                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
+                    }
+                }
+                _ => {
+                    // If not status 200, treat as UnknownValue
+                    match serde_json::from_str::<serde_json::Value>(&response_content.content) {
+                        Ok(unknown_data) => Err(Error::ResponseError(ResponseContent {
+                            status: response_content.status,
+                            content: response_content.content,
+                            entity: Some(
+                                PatchManagementCattleIoV3NamespacedProjectRoleTemplateBindingError::UnknownValue(
+                                    unknown_data,
+                                ),
+                            ),
+                        })),
+                        Err(unknown_deserialize_err) => Err(Error::Serde(unknown_deserialize_err)),
                     }
                 }
             }
