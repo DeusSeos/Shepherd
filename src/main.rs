@@ -10,7 +10,7 @@ use rancher_cac::file::FileFormat;
 use rancher_cac::update::compare_and_update_configurations;
 use rancher_cac::{ download_current_configuration, load_configuration, load_configuration_from_rancher, rancher_config_init};
 use rancher_cac::diff::{compute_cluster_diff, create_json_patch};
-use rancher_cac::git::{commit_changes, init_git_repo_with_main_branch, push_repo_to_remote};
+use rancher_cac::git::{commit_changes, get_new_uncommited_files, init_git_repo_with_main_branch, push_repo_to_remote};
 use rancher_cac::project::{find_project, get_projects, show_project_diff, show_text_diff, update_project, Project, PROJECT_EXCLUDE_PATHS};
 
 
@@ -46,7 +46,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // TODO: change this to use format fetched from our custom config file
     let file_format = FileFormat::Yaml;
 
-    let download = true;
+    let download = false;
+
+    
 
     if download {
         // Download the current configuration from the Rancher API
@@ -70,6 +72,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
 
+    let new_files = get_new_uncommited_files(&path).await?;
+
+    println!("New files: {:?}", new_files);
 
 
     // push the repo to the remote

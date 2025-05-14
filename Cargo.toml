@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 async-backtrace = "0.2.7"
+async-recursion = "1.1.1"
 chrono = { version = "0.4.41", features = ["serde"] }
 git2 = "0.20.1"
 json-patch = "4.0.0"

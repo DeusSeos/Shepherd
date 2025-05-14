@@ -1,6 +1,8 @@
-use std::path::Path;
+use std::{error::Error, ffi::OsString, path::{Path, PathBuf}};
 
-use git2::{Commit, IndexAddOption, ProxyOptions, PushOptions, Repository, Signature};
+use async_recursion::async_recursion;
+use git2::{Commit, IndexAddOption, ProxyOptions, PushOptions, Repository, Signature, Status};
+use tokio::fs::read_dir;
 
 
 /// Initialize a local git repository in the folder
@@ -179,48 +181,12 @@ pub fn push_repo_to_remote(folder_path: &Path, remote_url: &str) -> Result<(), S
 
 }
 
-
-// /// Commit changes to the local git repository
-// /// # Arguments
-// /// * `folder_path` - Folder path to the git repository
-// /// * `message` - Commit message
-// /// 
-// /// # Returns
-// /// * `Result<(), String>` - Result indicating success or failure
-// /// 
-// pub fn commit_changes(folder_path: &Path, message: &str) -> Result<(), String> {
-//     if !folder_path.exists() {
-//         return Err(format!("Folder does not exist: {}", folder_path.display()));
-//     }
-//     if !folder_path.is_dir() {
-//         return Err(format!("Path is not a directory: {}", folder_path.display()));
-//     }
-
-//     let repo = Repository::open(folder_path).map_err(|e| format!("Failed to open repository: {}", e))?;
-
-//     let mut index = repo.index().map_err(|e| format!("Failed to get index: {}", e))?;
-//     index.add_all(["*"], IndexAddOption::FORCE, None).map_err(|e| format!("Failed to add files to index: {}", e))?;
-//     index.write().map_err(|e| format!("Failed to write index: {}", e))?;
-
-//     let tree_oid = index.write_tree().map_err(|e| format!("Failed to write tree: {}", e))?;
-//     let tree = repo.find_tree(tree_oid).map_err(|e| format!("Failed to find tree: {}", e))?;
-
-//     let sig = repo.signature().or_else(|_| {
-//         Signature::now("GitOps Bot", "gitops@example.com")
-//     }).map_err(|e| format!("Failed to create signature: {}", e))?;
-//     let commit_oid = repo.commit(
-//         Some("HEAD"),
-//         &sig,
-//         &sig,
-//         message,
-//         &tree,
-//         &[],
-//     ).map_err(|e| format!("Failed to create commit: {}", e))?;
-//     println!("Created commit with id: {}", commit_oid);
-//     Ok(())
-// }
-
-
+/// Commits changes in a given folder path with the specified commit message.
+/// # Arguments
+/// * `folder_path` - The path of the folder containing the changes.
+/// * `message` - The commit message.
+/// # Returns
+/// * `Result<(), String>` - A result indicating success or failure.
 pub fn commit_changes(folder_path: &Path, message: &str) -> Result<(), String> {
     if !folder_path.exists() {
         return Err(format!("Folder does not exist: {}", folder_path.display()));
@@ -273,4 +239,69 @@ pub fn commit_changes(folder_path: &Path, message: &str) -> Result<(), String> {
     Ok(())
 }
 
+
+/// Collect the new uncommitted (untracked) files from a given folder path
+///
+/// # Arguments
+/// * `folder_path` - The path of the folder to collect files from.
+///
+/// # Returns
+/// A vector containing the absolute paths of all uncommitted (untracked) files
+/// in the specified folder and its subfolders.
+#[async_backtrace::framed]
+#[async_recursion]
+pub async fn get_new_uncommited_files(
+    folder_path: &Path,
+) -> Result<Vec<PathBuf>, Box<dyn Error>> {
+    let repo = Repository::discover(folder_path)
+        .map_err(|e| format!("Failed to open Git repo: {}", e))?;
+    let workdir = repo
+        .workdir()
+        .ok_or("Repository has no working directory")?;
+
+    let mut new_files = Vec::new();
+    let mut dir = read_dir(folder_path)
+        .await
+        .map_err(|e| format!("Failed to read dir {:?}: {}", folder_path, e))?;
+
+    while let Some(entry) = dir.next_entry().await
+        .map_err(|e| format!("Failed to read dir entry: {}", e))?
+    {
+        let path = entry.path();
+        let file_name_os: OsString = entry.file_name();
+
+        let name = file_name_os
+            .to_string_lossy();
+
+        // Skip the .git directory entirely
+        if entry.file_type().await?.is_dir() && name == ".git" {
+            continue;
+        }
+
+        let metadata = entry
+            .metadata()
+            .await
+            .map_err(|e| format!("Failed to stat {:?}: {}", path, e))?;
+
+        if metadata.is_dir() {
+            // recurse into subdirectory
+            let mut child = get_new_uncommited_files(&path).await?;
+            new_files.append(&mut child);
+        } else if metadata.is_file() {
+            // compute path relative to repo root
+            let rel = path.strip_prefix(workdir)
+                .map_err(|_| format!("File not under workdir: {:?}", path))?;
+
+            // check git status
+            let status = repo.status_file(rel)
+                .map_err(|e| format!("Git status error for {:?}: {}", rel, e))?;
+
+            if status.contains(Status::WT_NEW) {
+                new_files.push(path);
+            }
+        }
+    }
+
+    Ok(new_files)
+}
 

@@ -179,7 +179,7 @@ pub async fn download_current_configuration(
             .collect::<Result<_, _>>()?;
 
         for project in &projects {
-            let project_path = cluster_path.join(&project.id);
+            let project_path = cluster_path.join(&project.display_name);
             if !project_path.exists() {
                 create_dir_all(&project_path)
                     .await
@@ -188,7 +188,7 @@ pub async fn download_current_configuration(
 
             let project_file = project_path.join(format!(
                 "{}.{}",
-                project.id,
+                project.display_name,
                 file_extension_from_format(file_format)
             ));
             write(&project_file, serialize_object(project, file_format)?)
