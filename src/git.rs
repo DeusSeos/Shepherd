@@ -39,7 +39,7 @@ pub fn init_and_commit_git_repo(folder_path: &Path, remote_url: &str) -> Result<
     index.write().map_err(|e| format!("Failed to write index: {}", e))?; // <--- critical!
 
     let signature = repo.signature().or_else(|_| {
-        Signature::now("GitOps Bot", "gitops@example.com")
+        Signature::now(crate::FULL_CLIENT_ID, "gitops@example.com")
     }).map_err(|e| format!("Failed to create signature: {}", e))?;
     let tree_oid = index.write_tree().map_err(|e| format!("Failed to write tree: {}", e))?;
     let tree = repo.find_tree(tree_oid).map_err(|e| format!("Failed to find tree: {}", e))?;
@@ -239,7 +239,7 @@ pub fn commit_changes(folder_path: &Path, message: &str) -> Result<(), String> {
     let tree = repo.find_tree(tree_oid).map_err(|e| format!("Failed to find tree: {}", e))?;
 
     let sig = repo.signature().or_else(|_| {
-        Signature::now("GitOps Bot", "gitops@example.com")
+        Signature::now(crate::FULL_CLIENT_ID, "shepherd@test.com")
     }).map_err(|e| format!("Failed to create signature: {}", e))?;
 
     // Own the parent commit so it lives long enough
@@ -272,3 +272,5 @@ pub fn commit_changes(folder_path: &Path, message: &str) -> Result<(), String> {
     println!("Created commit with id: {}", commit_oid);
     Ok(())
 }
+
+

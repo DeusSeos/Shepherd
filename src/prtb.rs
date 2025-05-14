@@ -6,12 +6,7 @@ use rancher_client::{
     apis::{
         configuration::Configuration,
         management_cattle_io_v3_api::{
-            list_management_cattle_io_v3_namespaced_project_role_template_binding,
-            list_management_cattle_io_v3_project_role_template_binding_for_all_namespaces,
-            patch_management_cattle_io_v3_namespaced_project_role_template_binding,
-            ListManagementCattleIoV3NamespacedProjectRoleTemplateBindingError,
-            ListManagementCattleIoV3ProjectRoleTemplateBindingForAllNamespacesError,
-            PatchManagementCattleIoV3NamespacedProjectRoleTemplateBindingError,
+            create_management_cattle_io_v3_namespaced_project_role_template_binding, list_management_cattle_io_v3_namespaced_project_role_template_binding, list_management_cattle_io_v3_project_role_template_binding_for_all_namespaces, patch_management_cattle_io_v3_namespaced_project_role_template_binding, CreateManagementCattleIoV3NamespacedProjectRoleTemplateBindingError, ListManagementCattleIoV3NamespacedProjectRoleTemplateBindingError, ListManagementCattleIoV3ProjectRoleTemplateBindingForAllNamespacesError, PatchManagementCattleIoV3NamespacedProjectRoleTemplateBindingError
         },
         Error, ResponseContent,
     },
@@ -273,6 +268,58 @@ pub async fn update_project_role_template_binding(
         }
     }
 }
+
+/// Create a project role template binding from a given configuration
+/// # Arguments
+/// * `configuration` - The configuration for the request
+/// * `project_id` - The ID of the project to create the role template binding in
+/// * `body` - The project role template binding to create
+/// # Returns
+/// * `IoCattleManagementv3ProjectRoleTemplateBinding` - The project role template binding that was created
+/// # Errors
+/// * `Error<CreateManagementCattleIoV3NamespacedProjectRoleTemplateBindingError>` - The error that occurred during the request
+/// 
+pub async fn create_project_role_template_binding(
+    configuration: &Configuration,
+    project_id: &str,
+    body: ProjectRoleTemplateBinding,
+) -> Result<IoCattleManagementv3ProjectRoleTemplateBinding, Error<CreateManagementCattleIoV3NamespacedProjectRoleTemplateBindingError>> {
+    let body: IoCattleManagementv3ProjectRoleTemplateBinding = IoCattleManagementv3ProjectRoleTemplateBinding::try_from(body).expect("Failed to convert ProjectRoleTemplateBinding into IoCattleManagementv3ProjectRoleTemplateBinding");
+
+    let result = create_management_cattle_io_v3_namespaced_project_role_template_binding(configuration, project_id, body, None, None, Some(crate::FULL_CLIENT_ID), None).await;
+
+    match result {
+        Err(e) => Err(e),
+        Ok(response_content) => {
+            // Match on the status code and deserialize accordingly
+            match response_content.status {
+                StatusCode::OK => {
+                    // Try to deserialize the content into IoCattleManagementv3Project (Status200 case)
+                    match serde_json::from_str(&response_content.content) {
+                        Ok(data) => Ok(data),
+                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
+                    }
+                }
+                _ => {
+                    // If not status 200, treat as UnknownValue
+                    match serde_json::from_str::<serde_json::Value>(&response_content.content) {
+                        Ok(unknown_data) => Err(Error::ResponseError(ResponseContent {
+                            status: response_content.status,
+                            content: response_content.content,
+                            entity: Some(
+                                CreateManagementCattleIoV3NamespacedProjectRoleTemplateBindingError::UnknownValue(
+                                    unknown_data,
+                                ),
+                            ),
+                        })),
+                        Err(unknown_deserialize_err) => Err(Error::Serde(unknown_deserialize_err)),
+                    }
+                }
+            }
+        }
+    }
+}
+
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ProjectRoleTemplateBinding {

@@ -1,20 +1,22 @@
 // This file will contain all the functions that will be used to interact and extract from the Rancher API
 pub mod cluster;
 pub mod config;
+pub mod diff;
+pub mod file;
 pub mod git;
 pub mod project;
 pub mod prtb;
 pub mod rt;
-pub mod file;
-pub mod diff;
 pub mod update;
 
 use file::{file_extension_from_format, FileFormat};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::path::Path;
-use std::option::Option;
 use std::collections::HashMap;
+use std::error::Error;
+use std::option::Option;
+use std::path::Path;
+use tokio::fs::{create_dir_all, metadata, read_dir, read_to_string, write};
 
 use cluster::Cluster;
 use config::{ClusterConfig, RancherClusterConfig};
@@ -22,9 +24,13 @@ use project::Project;
 use prtb::ProjectRoleTemplateBinding;
 use rt::{get_role_templates, RoleTemplate};
 
-use rancher_client::models::{IoCattleManagementv3Project, IoCattleManagementv3ProjectRoleTemplateBinding, IoCattleManagementv3RoleTemplate};
 use rancher_client::apis::configuration::{ApiKey, Configuration};
+use rancher_client::models::{
+    IoCattleManagementv3Project, IoCattleManagementv3ProjectRoleTemplateBinding,
+    IoCattleManagementv3RoleTemplate,
+};
 
+include!(concat!(env!("OUT_DIR"), "/client_info.rs"));
 
 pub fn rancher_config_init(host: &str, token: &str) -> Configuration {
     let mut config = Configuration::new();
@@ -71,124 +77,85 @@ pub async fn download_current_configuration(
     configuration: &Configuration,
     path: &Path,
     file_format: &FileFormat,
-) {
-    // Get the current configuration from the Rancher API
+) -> Result<(), Box<dyn Error>> {
     let rancher_cluster = cluster::get_clusters(configuration)
         .await
-        .map_err(|e| {
-            println!("Failed to get clusters: {:?}", e);
-            std::process::exit(1);
-        })
-        .unwrap();
+        .map_err(|e| format!("Failed to get clusters: {e:?}"))?;
+
     let rancher_role_templates =
         get_role_templates(configuration, None, None, None, None, None, None)
             .await
-            .map_err(|e| {
-                println!("Failed to get role templates: {:?}", e);
-                std::process::exit(1);
-            })
-            .unwrap();
-
-    // Create the base folder if it does not exist. Base folder will be the path provided and the endpoint url
-    // for example: /tmp/rancher_config/https://rancher.rd.localhost
+            .map_err(|e| format!("Failed to get role templates: {e:?}"))?;
 
     let base_path = path.join(
         configuration
             .base_path
+            .trim_end_matches('/')
             .replace("https://", "")
-            .replace("/", "_"),
+            .replace('/', "_"),
     );
     if !base_path.exists() {
-        let _ = std::fs::create_dir_all(&base_path).map_err(|e| {
-            println!("Failed to create folder: {:?}", e);
-            std::process::exit(1);
-        });
-    }
-    // create the folder for the role templates if it does not exist
-    let role_template_path = base_path.join("roles");
-    if !role_template_path.exists() {
-        let _ = std::fs::create_dir_all(&role_template_path).map_err(|e| {
-            println!("Failed to create folder: {:?}", e);
-            std::process::exit(1);
-        });
+        create_dir_all(&base_path)
+            .await
+            .map_err(|e| format!("Failed to create folder: {e:?}"))?;
     }
 
-    // convert the role templates to our simple struct for each object using the try_from method
+    let role_template_path = base_path.join("roles");
+    if !role_template_path.exists() {
+        create_dir_all(&role_template_path)
+            .await
+            .map_err(|e| format!("Failed to create folder: {e:?}"))?;
+    }
+
     let role_templates: Vec<RoleTemplate> = rancher_role_templates
         .items
         .into_iter()
-        .map(|role_template| {
-            // try to convert the IoCattleManagementV3RoleTemplate to our simple RoleTemplate struct
-            // if it fails, return an error
-            role_template
-                .try_into()
-                .map_err(|e| {
-                    println!("Failed to convert role template: {:?}", e);
-                    std::process::exit(1);
-                })
-                .unwrap()
+        .map(|item| {
+            item.try_into()
+                .map_err(|e| format!("Failed to convert role template: {e}"))
         })
-        .collect::<Vec<RoleTemplate>>();
+        .collect::<Result<_, _>>()?;
 
-    // Loop through the role templates and save them to the folder
     for role_template in &role_templates {
-        // save the role template to the folder
         let role_template_file = role_template_path.join(format!(
             "{}.{}",
             role_template.id,
             file_extension_from_format(file_format)
         ));
-        let _ = std::fs::write(
+        write(
             &role_template_file,
-            serialize_object(role_template, file_format),
+            serialize_object(role_template, file_format)?,
         )
-        .map_err(|e| {
-            println!("Failed to write file: {:?}", e);
-            std::process::exit(1);
-        });
+        .await
+        .map_err(|e| format!("Failed to write file {:?}: {e}", role_template_file))?;
     }
 
-    // convert the items to our simple struct for each object using the try_from method
     let clusters: Vec<Cluster> = rancher_cluster
         .items
         .into_iter()
-        .map(|cluster| {
-            // try to convert the IoCattleManagementV3Cluster to our simple Cluster struct
-            // if it fails, return an error
-            cluster
-                .try_into()
-                .map_err(|e| {
-                    println!("Failed to convert cluster: {:?}", e);
-                    std::process::exit(1);
-                })
-                .unwrap()
+        .map(|item| {
+            item.try_into()
+                .map_err(|e| format!("Failed to convert cluster: {e:?}"))
         })
-        .collect::<Vec<Cluster>>();
+        .collect::<Result<_, _>>()?;
 
-    // Loop through the clusters and save them to the folder
     for cluster in &clusters {
-        // create the folder for the cluster if it does not exist
-        let cluster_path = base_path.join(cluster.id.clone());
+        let cluster_path = base_path.join(&cluster.id);
         if !cluster_path.exists() {
-            let _ = std::fs::create_dir_all(&cluster_path).map_err(|e| {
-                println!("Failed to create folder: {:?}", e);
-                std::process::exit(1);
-            });
+            create_dir_all(&cluster_path)
+                .await
+                .map_err(|e| format!("Failed to create folder: {e:?}"))?;
         }
 
-        // save the cluster to the folder
         let cluster_file = cluster_path.join(format!(
             "{}.{}",
             cluster.id,
             file_extension_from_format(file_format)
         ));
-        let _ =
-            std::fs::write(&cluster_file, serialize_object(cluster, file_format)).map_err(|e| {
-                println!("Failed to write file: {:?}", e);
-                std::process::exit(1);
-            });
+        write(&cluster_file, serialize_object(cluster, file_format)?)
+            .await
+            .map_err(|e| format!("Failed to write file: {e:?}"))?;
 
-        // fetch the projects for the cluster
         let rancher_projects = project::get_projects(
             configuration,
             &cluster.id,
@@ -200,137 +167,95 @@ pub async fn download_current_configuration(
             None,
         )
         .await
-        .map_err(|e| {
-            println!("Failed to get projects: {:?}", e);
-            std::process::exit(1);
-        })
-        .unwrap();
-        // convert the items to our simple struct for each object using the try_from method
+        .map_err(|e| format!("Failed to get projects: {e:?}"))?;
+
         let projects: Vec<Project> = rancher_projects
             .items
             .into_iter()
-            .map(|project| {
-                // try to convert the IoCattleManagementV3Project to our simple Project struct
-                // if it fails, return an error
-                project
-                    .try_into()
-                    .map_err(|e| {
-                        println!("Failed to convert project: {:?}", e);
-                        std::process::exit(1);
-                    })
-                    .unwrap()
+            .map(|item| {
+                item.try_into()
+                    .map_err(|e| format!("Failed to convert project: {e:?}"))
             })
-            .collect::<Vec<project::Project>>();
+            .collect::<Result<_, _>>()?;
 
-        // Loop through the projects and save them to the folder
         for project in &projects {
-            // create the folder for the project if it does not exist
-            let project_path = cluster_path.join(project.id.clone());
+            let project_path = cluster_path.join(&project.id);
             if !project_path.exists() {
-                let _ = std::fs::create_dir_all(&project_path).map_err(|e| {
-                    println!("Failed to create folder: {:?}", e);
-                    std::process::exit(1);
-                });
+                create_dir_all(&project_path)
+                    .await
+                    .map_err(|e| format!("Failed to create folder: {e:?}"))?;
             }
 
-            // save the project to the folder
             let project_file = project_path.join(format!(
                 "{}.{}",
                 project.id,
                 file_extension_from_format(file_format)
             ));
-            let _ = std::fs::write(&project_file, serialize_object(project, file_format)).map_err(
-                |e| {
-                    println!("Failed to write file: {:?}", e);
-                    std::process::exit(1);
-                },
-            );
-
-            let rancher_project_role_template_bindings =
-                prtb::get_namespaced_project_role_template_bindings(
-                    configuration,
-                    &project.id,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
+            write(&project_file, serialize_object(project, file_format)?)
                 .await
-                .map_err(|e| {
-                    println!("Failed to get project role template bindings: {:?}", e);
-                    std::process::exit(1);
-                })
-                .unwrap();
+                .map_err(|e| format!("Failed to write file: {e:?}"))?;
 
-            // TODO: convert the conversion to a generic function
-            let prtbs: Vec<ProjectRoleTemplateBinding> = rancher_project_role_template_bindings
+            let rancher_prtbs = prtb::get_namespaced_project_role_template_bindings(
+                configuration,
+                &project.id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .map_err(|e| format!("Failed to get PRTBs: {e:?}"))?;
+
+            let prtbs: Vec<ProjectRoleTemplateBinding> = rancher_prtbs
                 .items
                 .into_iter()
-                .map(|prtb| {
-                    // try to convert the IoCattleManagementV3ProjectRoleTemplateBinding to our simple ProjectRoleTemplateBinding struct
-                    // if it fails, return an error
-                    prtb.try_into()
-                        .map_err(|e| {
-                            println!("Failed to convert project role template binding: {:?}", e);
-                            std::process::exit(1);
-                        })
-                        .unwrap()
+                .map(|item| {
+                    item.try_into()
+                        .map_err(|e| format!("Failed to convert PRTB: {e:?}"))
                 })
-                .collect::<Vec<prtb::ProjectRoleTemplateBinding>>();
+                .collect::<Result<_, _>>()?;
 
-            // Loop through the project role template bindings and save them to the folder
             for prtb in &prtbs {
-                // save the project role template binding to the project folder
                 let prtb_file = project_path.join(format!(
                     "{}.{}",
                     prtb.id,
                     file_extension_from_format(file_format)
                 ));
-                let _ =
-                    std::fs::write(&prtb_file, serialize_object(prtb, file_format)).map_err(|e| {
-                        println!("Failed to write file: {:?}", e);
-                        std::process::exit(1);
-                    });
+                write(&prtb_file, serialize_object(prtb, file_format)?)
+                    .await
+                    .map_err(|e| format!("Failed to write file: {e:?}"))?;
             }
         }
     }
+
+    Ok(())
 }
 
 #[async_backtrace::framed]
 pub async fn load_configuration_from_rancher(
     configuration: &Configuration,
-    cluster_id: &str) -> RancherClusterConfig {
-
-    
-
+    cluster_id: &str,
+) -> Result<RancherClusterConfig, Box<dyn Error>> {
     // Get the current configuration from the Rancher API
     let rancher_clusters = cluster::get_clusters(configuration)
         .await
-        .map_err(|e| {
-            println!("Failed to get clusters: {:?}", e);
-            std::process::exit(1);
-        })
-        .unwrap();
+        .map_err(|e| Box::<dyn Error>::from(format!("Failed to get clusters: {:?}", e)))?;
     let rancher_cluster = rancher_clusters
         .items
         .into_iter()
-        .find(|cluster| cluster.metadata.as_ref().and_then(|m| m.name.as_deref()) == Some(cluster_id))
+        .find(|cluster| {
+            cluster.metadata.as_ref().and_then(|m| m.name.as_deref()) == Some(cluster_id)
+        })
         .unwrap();
 
-    let rancher_role_templates = get_role_templates(
-        configuration,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-    ).await.map_err(|e| {
-        println!("Failed to get role templates: {:?}", e);
-        std::process::exit(1);
-    }).unwrap();
+    let rancher_role_templates =
+        get_role_templates(configuration, None, None, None, None, None, None)
+            .await
+            .map_err(|e| {
+                Box::<dyn Error>::from(format!("Failed to get role templates: {:?}", e))
+            })?;
 
     let rrt: Vec<IoCattleManagementv3RoleTemplate> = rancher_role_templates.items.clone();
 
@@ -345,11 +270,9 @@ pub async fn load_configuration_from_rancher(
         None,
         None,
         None,
-    ).await.map_err(|e| {
-        println!("Failed to get projects: {:?}", e);
-        std::process::exit(1);
-    }).unwrap();
-
+    )
+    .await
+    .map_err(|e| Box::<dyn Error>::from(format!("Failed to get projects: {:?}", e)))?;
 
     let mut rancher_cluster_config = RancherClusterConfig {
         cluster: rancher_cluster,
@@ -358,10 +281,14 @@ pub async fn load_configuration_from_rancher(
     };
 
     let rprojects: Vec<IoCattleManagementv3Project> = rancher_projects.items.clone();
-        
+
     for rproject in rprojects {
         let project = rproject.clone();
-        let project_id = project.metadata.as_ref().and_then(|m| m.name.as_deref()).unwrap();
+        let project_id = project
+            .metadata
+            .as_ref()
+            .and_then(|m| m.name.as_deref())
+            .unwrap();
         let rancher_project_role_template_bindings =
             prtb::get_namespaced_project_role_template_bindings(
                 configuration,
@@ -372,26 +299,23 @@ pub async fn load_configuration_from_rancher(
                 None,
                 None,
                 None,
-            ).await.map_err(|e| {
-            println!("Failed to get project role template bindings: {:?}", e);
-            std::process::exit(1);
-        }).unwrap();
-        let rprtbs: Vec<IoCattleManagementv3ProjectRoleTemplateBinding> = rancher_project_role_template_bindings.items.clone();
-        
-        rancher_cluster_config.projects.insert(
-            project_id.to_string(),
-            (project, rprtbs),
-        );
+            )
+            .await
+            .map_err(|e| {
+                Box::<dyn Error>::from(format!(
+                    "Failed to get project role template bindings: {:?}",
+                    e
+                ))
+            })?;
+        let rprtbs: Vec<IoCattleManagementv3ProjectRoleTemplateBinding> =
+            rancher_project_role_template_bindings.items.clone();
+
+        rancher_cluster_config
+            .projects
+            .insert(project_id.to_string(), (project, rprtbs));
     }
-
-
-    return rancher_cluster_config;
-
-    }
-
-
-
-
+    return Ok(rancher_cluster_config);
+}
 
 // load the entire configuration from the base path
 ///
@@ -408,43 +332,30 @@ pub async fn load_configuration(
     endpoint_url: &str,
     cluster_id: &str,
     file_format: &FileFormat,
-) -> Result<Option<ClusterConfig>, ()> {
-    // create the path to the endpoint
+) -> Result<Option<ClusterConfig>, Box<dyn Error>> {
     let endpoint_path = path.join(endpoint_url.replace("https://", "").replace("/", "_"));
-    // check if the path exists
     if !endpoint_path.exists() {
-        println!("Configuration path does not exist");
-        return Err(());
-    }
-    // create the cluster path
-    let cluster_folder_path = endpoint_path.join(cluster_id);
-    // check if the path exists
-    if !cluster_folder_path.exists() {
-        println!("Cluster path does not exist");
-        return Err(());
+        return Err(format!("Configuration path does not exist: {:?}", endpoint_path).into());
     }
 
-    // read the cluster file
+    let cluster_folder_path = endpoint_path.join(cluster_id);
+    if !cluster_folder_path.exists() {
+        return Err(format!("Cluster path does not exist: {:?}", cluster_folder_path).into());
+    }
+
     let cluster_file = cluster_folder_path.join(format!(
         "{}.{}",
         cluster_id,
         file_extension_from_format(file_format)
     ));
-    // check if the file exists
     if !cluster_file.exists() {
-        println!("Cluster file does not exist");
-        return Err(());
+        return Err(format!("Cluster file does not exist: {:?}", cluster_file).into());
     }
 
-    // read the file and deserialize it
-    let cluster_file_content = std::fs::read_to_string(&cluster_file)
-        .map_err(|e| {
-            println!("Failed to read file: {:?}", e);
-            e
-        })
-        .unwrap();
-
-    let cluster: Cluster = deserialize_object(&cluster_file_content, file_format);
+    let cluster_file_content = read_to_string(&cluster_file)
+        .await
+        .map_err(|e| format!("Failed to read file: {}", e))?;
+    let cluster: Cluster = deserialize_object(&cluster_file_content, file_format)?;
 
     let mut cluster_config = ClusterConfig {
         cluster: cluster.clone(),
@@ -452,143 +363,77 @@ pub async fn load_configuration(
         projects: HashMap::new(),
     };
 
-    // read the role templates
+    // Read role templates
     let role_template_path = endpoint_path.join("roles");
-
-    // check if the path exists
     if !role_template_path.exists() {
-        println!("Role template path does not exist");
-        std::process::exit(1);
+        return Err(format!(
+            "Role template path does not exist: {:?}",
+            role_template_path
+        )
+        .into());
     }
-    // read the role template files
-    let role_template_files = std::fs::read_dir(&role_template_path)
-        .map_err(|e| {
-            println!("Failed to read directory: {:?}", e);
-            e
-        })
-        .unwrap();
-    // create a vector to hold the role templates
-    let mut role_templates: Vec<RoleTemplate> = Vec::new();
-    // loop through the files and deserialize them
-    for role_template_file in role_template_files {
-        // get the file name
-        let role_template_file = role_template_file.unwrap();
-        // check if the file is a file
-        if role_template_file.file_type().unwrap().is_file() {
-            // read the file and deserialize it
-            let role_template_file_content = std::fs::read_to_string(role_template_file.path())
-                .map_err(|e| {
-                    println!("Failed to read file: {:?}", e);
-                    std::process::exit(1);
-                })
-                .unwrap();
-            // deserialize the file
-            let role_template: RoleTemplate =
-                deserialize_object(&role_template_file_content, file_format);
-            // add the role template to the vector
+
+    let mut role_template_dir = read_dir(&role_template_path)
+        .await
+        .map_err(|e| format!("Failed to read role template directory: {}", e))?;
+
+    let mut role_templates = Vec::new();
+    while let Some(entry) = role_template_dir.next_entry().await.map_err(|e| format!("Failed to read role template entry: {}", e))? {
+        if entry.file_type().await?.is_file() {
+            let content = read_to_string(entry.path())
+                .await
+                .map_err(|e| format!("Failed to read role template file: {}", e))?;
+            let role_template: RoleTemplate = deserialize_object(&content, file_format)?;
             role_templates.push(role_template);
         }
     }
-    // add the role templates to the cluster config
-    cluster_config.role_templates = role_templates.clone();
+    cluster_config.role_templates = role_templates;
 
-    // read the project folders
-    let project_folders = std::fs::read_dir(&cluster_folder_path)
-        .map_err(|e| {
-            println!("Failed to read directory: {:?}", e);
-            e
-        })
-        .unwrap();
+    // Read projects and their PRTBs
+    let mut project_dir = read_dir(&cluster_folder_path).await.map_err(|e| format!("Failed to read cluster folder: {}", e))?;
 
-    // loop through the folders and deserialize them
-    for project_folder in project_folders {
-        // get the folder name
-        let project_folder = project_folder.unwrap();
-        // check if the folder is a directory
-        if project_folder.file_type().unwrap().is_dir() {
-            // read the project file
-            let project_file = project_folder.path().join(format!(
+    while let Some(entry) = project_dir.next_entry().await.map_err(|e| format!("Failed to read project entry: {}", e))? {
+        if entry.file_type().await?.is_dir() {
+            let project_id = entry.file_name().to_string_lossy().to_string();
+            let project_file = entry.path().join(format!(
                 "{}.{}",
-                project_folder.file_name().to_str().unwrap(),
+                project_id,
                 file_extension_from_format(file_format)
             ));
-            // check if the file exists
-            if !project_file.exists() {
-                println!("Project file does not exist");
-                return Err(());
-            }
-            // read the file and deserialize it
-            let project_file_content = std::fs::read_to_string(&project_file)
-                .map_err(|e| {
-                    println!("Failed to read file: {:?}", e);
-                    e
-                })
-                .unwrap();
-            let project: Project = deserialize_object(&project_file_content, file_format);
 
-            // add the project to the cluster config
+            if !project_file.exists() {
+                return Err(format!("Project file does not exist: {:?}", project_file).into());
+            }
+
+            let content = read_to_string(&project_file)
+                .await
+                .map_err(|e| format!("Failed to read project file: {}", e))?;
+            let project: Project = deserialize_object(&content, file_format)?;
+
             cluster_config
                 .projects
                 .insert(project.id.clone(), (project.clone(), Vec::new()));
 
-            // read the project role template binding files, exclude the project file
-            let prtb_files = std::fs::read_dir(project_folder.path())
-                .map_err(|e| {
-                    println!("Failed to read directory: {:?}", e);
-                    e
-                })
-                .unwrap();
-            // exclude the project file from the list of files
-            let prtb_files: Vec<_> = prtb_files
-                .filter(|prtb_file| {
-                    // check if the file is a file
-                    let prtb_file = prtb_file.as_ref().unwrap();
-                    if prtb_file.file_type().unwrap().is_file() {
-                        // check if the file is not the project file
-                        if prtb_file.path() != project_file {
-                            return true;
-                        }
-                    }
-                    false
-                })
-                .collect();
-            // create a vector to hold the project role template bindings
-            let mut project_role_template_bindings: Vec<ProjectRoleTemplateBinding> = Vec::new();
-            // loop through the files and deserialize them
-            for prtb_file in prtb_files {
-                // get the file name
-                let prtb_file = prtb_file.unwrap();
-                // check if the file is a file
-                if prtb_file.file_type().unwrap().is_file() {
-                    // read the file and deserialize it
-                    let prtb_file_content = std::fs::read_to_string(prtb_file.path())
-                        .map_err(|e| {
-                            println!("Failed to read file: {:?}", e);
-                            std::process::exit(1);
-                        })
-                        .unwrap();
-                    // deserialize the file
-                    let prtb: ProjectRoleTemplateBinding =
-                        deserialize_object(&prtb_file_content, file_format);
-                    // add the project role template binding to the vector
-                    project_role_template_bindings.push(prtb);
+            let mut prtb_entries = read_dir(entry.path()).await.map_err(|e| format!("Failed to read PRTB directory: {}", e))?;
+
+            let mut prtbs = Vec::new();
+            while let Some(prtb_entry) = prtb_entries.next_entry().await.map_err(|e| format!("Failed to read PRTB entry: {}", e))? {
+            if prtb_entry.file_type().await?.is_file() && prtb_entry.path() != project_file {
+                    let content = read_to_string(prtb_entry.path()).await .map_err(|e| format!("Failed to read PRTB file: {}", e))?;
+                    let prtb: ProjectRoleTemplateBinding = deserialize_object(&content, file_format)?;
+                prtbs.push(prtb);
                 }
             }
-            // add the project role template bindings to the cluster config
-            // check if the project exists in the cluster config
-            if let Some((_, prtbs)) = cluster_config.projects.get_mut(&project.id) {
-                // add the project role template bindings to the project
-                prtbs.extend(project_role_template_bindings);
+            if let Some((_, existing_prtbs)) = cluster_config.projects.get_mut(&project.id) {
+                existing_prtbs.extend(prtbs);
             } else {
-                println!("Project not found in cluster config");
-                return Err(());
+                return Err(format!("Project not found in cluster config: {}", project.id).into());
             }
         }
     }
 
     Ok(Some(cluster_config))
 }
-
 
 /// load a specific project configuration from the base path
 ///
@@ -608,37 +453,40 @@ async fn load_project(
     cluster_id: &str,
     project_id: &str,
     file_format: FileFormat,
-) -> Project {
+) -> Result<Project, Box<dyn Error>> {
     // create the path to the project
     let project_path = base_path
         .join(endpoint_url.replace("https://", "").replace("/", "_"))
         .join(cluster_id)
         .join(project_id);
     // check if the path exists
-    if !project_path.exists() {
-        println!("Project path does not exist");
-        std::process::exit(1);
-    }
-    // read the file from the path
+    
+    metadata(&project_path).await.map_err(|_| format!("Project path does not exist: {:?}", project_path))?
+        .is_dir()
+        .then(|| ())
+        .ok_or_else(|| format!("Not a directory: {:?}", project_path))?;
+
+    // build the file path
     let project_file = project_path.join(format!(
         "{}.{}",
         project_id,
         file_extension_from_format(&file_format)
     ));
-    // check if the file exists
-    if !project_file.exists() {
-        println!("Project file does not exist");
-        std::process::exit(1);
-    }
-    // read the file and deserialize it
-    let project_file_content = std::fs::read_to_string(&project_file)
-        .map_err(|e| {
-            println!("Failed to read file: {:?}", e);
-            std::process::exit(1);
-        })
-        .unwrap();
 
-    deserialize_object(&project_file_content, &file_format)
+    // ensure the file exists
+    metadata(&project_file)
+        .await
+        .map_err(|_| format!("Project file does not exist: {:?}", project_file))?
+        .is_file()
+        .then(|| ())
+        .ok_or_else(|| format!("Not a file: {:?}", project_file))?;
+
+    // read and deserialize
+    let content = read_to_string(&project_file)
+        .await
+        .map_err(|e| format!("Failed to read file {:?}: {}", project_file, e))?;
+
+    Ok(deserialize_object(&content, &file_format)?)
 }
 
 /// Recursively remove fields from a JSON Value based on a list of dot-separated paths.
@@ -672,28 +520,21 @@ fn remove_path_and_return(value: &mut Value, path: &[&str]) -> Option<Value> {
     current.as_object_mut().unwrap().remove(last_key)
 }
 
-
 /// serialize the object to the file format specified
-pub fn serialize_object<T: serde::Serialize>(object: &T, file_format: &FileFormat) -> String {
+pub fn serialize_object<T: serde::Serialize>(
+    object: &T,
+    file_format: &FileFormat,
+) -> Result<String, Box<dyn Error>> {
     match file_format {
-        FileFormat::Yaml => serde_yaml::to_string(object)
-            .map_err(|e| {
-                println!("Failed to serialize object: {:?}", e);
-                std::process::exit(1);
-            })
-            .unwrap(),
-        FileFormat::Json => serde_json::to_string_pretty(object)
-            .map_err(|e| {
-                println!("Failed to serialize object: {:?}", e);
-                std::process::exit(1);
-            })
-            .unwrap(),
-        FileFormat::Toml => toml::to_string_pretty(object)
-            .map_err(|e| {
-                println!("Failed to serialize object: {:?}", e);
-                std::process::exit(1);
-            })
-            .unwrap(),
+        FileFormat::Yaml => serde_yaml::to_string(object).map_err(|e| {
+            Box::<dyn Error>::from(format!("Failed to serialize object to YAML: {}", e))
+        }),
+        FileFormat::Json => serde_json::to_string_pretty(object).map_err(|e| {
+            Box::<dyn Error>::from(format!("Failed to serialize object to JSON: {}", e))
+        }),
+        FileFormat::Toml => toml::to_string_pretty(object).map_err(|e| {
+            Box::<dyn Error>::from(format!("Failed to serialize object to TOML: {}", e))
+        }),
     }
 }
 
@@ -705,15 +546,13 @@ pub fn serialize_object<T: serde::Serialize>(object: &T, file_format: &FileForma
 pub fn deserialize_object<T: serde::de::DeserializeOwned>(
     object: &str,
     file_format: &FileFormat,
-) -> T {
+) -> Result<T, Box<dyn Error>> {
     match file_format {
-        FileFormat::Yaml => serde_yaml::from_str(object).unwrap(),
-        FileFormat::Json => serde_json::from_str(object).unwrap(),
-        FileFormat::Toml => toml::de::from_str(object).unwrap(),
+        FileFormat::Yaml => serde_yaml::from_str(object).map_err(|e| e.into()),
+        FileFormat::Json => serde_json::from_str(object).map_err(|e| e.into()),
+        FileFormat::Toml => toml::from_str(object).map_err(|e| e.into()),
     }
 }
-
-
 
 pub enum ResourceVersionMatch {
     Exact,
@@ -721,7 +560,6 @@ pub enum ResourceVersionMatch {
 }
 
 impl ResourceVersionMatch {
-
     fn as_str(&self) -> &'static str {
         match self {
             ResourceVersionMatch::Exact => "Exact",
@@ -746,7 +584,6 @@ impl std::str::FromStr for ResourceVersionMatch {
     }
 }
 
-
 /// The type of object to be updated in Rancher.
 ///
 /// This enum represents the different types of objects that can be updated in Rancher. It includes:
@@ -762,4 +599,3 @@ pub enum ObjectType {
     RoleTemplate,
     ProjectRoleTemplateBinding,
 }
-

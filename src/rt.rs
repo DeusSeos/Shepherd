@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use rancher_client::{apis::{configuration::Configuration, Error, ResponseContent}, models::IoK8sApimachineryPkgApisMetaV1Patch};
+use rancher_client::{apis::{configuration::Configuration, management_cattle_io_v3_api::{create_management_cattle_io_v3_role_template, CreateManagementCattleIoV3RoleTemplateError}, Error, ResponseContent}, models::IoK8sApimachineryPkgApisMetaV1Patch};
 use reqwest::StatusCode;
 
 use rancher_client::{
@@ -176,6 +176,54 @@ pub async fn update_role_template(configuration: &Configuration,
     }
 }
 
+/// Create a role template from a given configuration
+/// # Arguments
+/// * `configuration` - The configuration for the request
+/// * `body` - The role template to create
+/// # Returns
+/// * `IoCattleManagementv3RoleTemplate` - The project role template binding that was created
+/// # Errors
+/// * `Error<CreateManagementCattleIoV3RoleTemplateError>` - The error that occurred during the request
+/// 
+pub async fn create_role_template(configuration: &Configuration, body: RoleTemplate) -> Result<IoCattleManagementv3RoleTemplate, Error<CreateManagementCattleIoV3RoleTemplateError>> {
+
+    let body: IoCattleManagementv3RoleTemplate = IoCattleManagementv3RoleTemplate::try_from(body).expect("Failed to convert RoleTemplate into IoCattleManagementv3RoleTemplate");
+
+    let result = create_management_cattle_io_v3_role_template(configuration, body, None, None, Some(crate::FULL_CLIENT_ID), None).await;
+
+    match result {
+        Err(e) => Err(e),
+        Ok(response_content) => {
+            // Match on the status code and deserialize accordingly
+            match response_content.status {
+                StatusCode::OK => {
+                    // Try to deserialize the content into IoCattleManagementv3Project (Status200 case)
+                    match serde_json::from_str(&response_content.content) {
+                        Ok(data) => Ok(data),
+                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
+                    }
+                }
+                _ => {
+                    // If not status 200, treat as UnknownValue
+                    match serde_json::from_str::<serde_json::Value>(&response_content.content) {
+                        Ok(unknown_data) => Err(Error::ResponseError(ResponseContent {
+                            status: response_content.status,
+                            content: response_content.content,
+                            entity: Some(
+                                CreateManagementCattleIoV3RoleTemplateError::UnknownValue(
+                                    unknown_data,
+                                ),
+                            ),
+                        })),
+                        Err(unknown_deserialize_err) => Err(Error::Serde(unknown_deserialize_err)),
+                    }
+                }
+            }
+        }
+    }
+
+
+}
 
 
 

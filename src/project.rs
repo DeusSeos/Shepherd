@@ -11,12 +11,7 @@ use rancher_client::{
     apis::{
         configuration::Configuration,
         management_cattle_io_v3_api::{
-            list_management_cattle_io_v3_namespaced_project,
-            patch_management_cattle_io_v3_namespaced_project,
-            read_management_cattle_io_v3_namespaced_project,
-            ListManagementCattleIoV3NamespacedProjectError,
-            PatchManagementCattleIoV3NamespacedProjectError,
-            ReadManagementCattleIoV3NamespacedProjectError,
+            create_management_cattle_io_v3_namespaced_project, list_management_cattle_io_v3_namespaced_project, patch_management_cattle_io_v3_namespaced_project, read_management_cattle_io_v3_namespaced_project, CreateManagementCattleIoV3NamespacedProjectError, ListManagementCattleIoV3NamespacedProjectError, PatchManagementCattleIoV3NamespacedProjectError, ReadManagementCattleIoV3NamespacedProjectError
         },
         Error, ResponseContent,
     },
@@ -252,6 +247,56 @@ pub async fn update_project(
             }
         }
     }
+}
+
+/// Create a project from a given configuration
+/// # Arguments
+/// * `configuration` - The configuration for the request
+/// * `cluster_id` - The ID of the cluster to create the project in
+/// * `body` - The project to create
+/// # Returns
+/// * `IoCattleManagementv3Project`` - The project that was created
+/// # Errors
+/// * `Error<CreateManagementCattleIoV3NamespacedProjectError>` - The error that occurred during the request
+/// 
+pub async fn create_project(configuration: &Configuration, cluster_id: &str, body: Project ) -> Result<IoCattleManagementv3Project, Error<CreateManagementCattleIoV3NamespacedProjectError>> {
+
+    let body: IoCattleManagementv3Project = IoCattleManagementv3Project::try_from(body).expect("Failed to convert Project to IoCattleManagementv3Project");
+
+    let result = create_management_cattle_io_v3_namespaced_project(configuration, cluster_id, body, None, None, Some(crate::FULL_CLIENT_ID), None).await;
+
+    match result {
+        Err(e) => Err(e),
+        Ok(response_content) => {
+            // Match on the status code and deserialize accordingly
+            match response_content.status {
+                StatusCode::OK => {
+                    // Try to deserialize the content into IoCattleManagementv3Project (Status200 case)
+                    match serde_json::from_str(&response_content.content) {
+                        Ok(data) => Ok(data),
+                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
+                    }
+                }
+                _ => {
+                    // If not status 200, treat as UnknownValue
+                    match serde_json::from_str::<serde_json::Value>(&response_content.content) {
+                        Ok(unknown_data) => Err(Error::ResponseError(ResponseContent {
+                            status: response_content.status,
+                            content: response_content.content,
+                            entity: Some(
+                                CreateManagementCattleIoV3NamespacedProjectError::UnknownValue(
+                                    unknown_data,
+                                ),
+                            ),
+                        })),
+                        Err(unknown_deserialize_err) => Err(Error::Serde(unknown_deserialize_err)),
+                    }
+                }
+            }
+        }
+    }
+
+
 }
 
 #[derive(Serialize, Deserialize, SerdeDiff, Debug, Clone, PartialEq)]

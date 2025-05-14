@@ -19,7 +19,7 @@ pub async fn compare_and_update_configurations(
     let stored_config: RancherClusterConfig = RancherClusterConfig::try_from(stored_config).unwrap();
 
     // Load the live Rancher configuration
-    let live_config = load_configuration_from_rancher(configuration, cluster_id).await;
+    let live_config = load_configuration_from_rancher(configuration, cluster_id).await?;
 
     // Convert configurations to serde_json::Value for comparison
     let stored_config_value: Value = serde_json::to_value(stored_config)?;
