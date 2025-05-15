@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::option::Option;
 use std::path::Path;
-use tokio::fs::{create_dir_all, metadata, read_dir, read_to_string, write};
+use tokio::fs::{create_dir_all, read_dir, read_to_string, write};
 
 use cluster::Cluster;
 use config::{ClusterConfig, RancherClusterConfig};
@@ -54,6 +54,8 @@ pub fn rancher_config_init(host: &str, token: &str) -> Configuration {
 
 //
 // the example folder structure will be as follows:
+
+
 // /c-293x
 // ├─ c-293x.(yaml/json/toml)
 // ├─ /p-2a4i21
@@ -197,7 +199,7 @@ pub async fn download_current_configuration(
 
             let rancher_prtbs = prtb::get_namespaced_project_role_template_bindings(
                 configuration,
-                &project.id,
+                &project.id.as_ref().unwrap().to_string(),
                 None,
                 None,
                 None,
@@ -394,10 +396,10 @@ pub async fn load_configuration(
 
     while let Some(entry) = project_dir.next_entry().await.map_err(|e| format!("Failed to read project entry: {}", e))? {
         if entry.file_type().await?.is_dir() {
-            let project_id = entry.file_name().to_string_lossy().to_string();
+            let project_display_name = entry.file_name().to_string_lossy().to_string();
             let project_file = entry.path().join(format!(
                 "{}.{}",
-                project_id,
+                project_display_name,
                 file_extension_from_format(file_format)
             ));
 
@@ -410,9 +412,11 @@ pub async fn load_configuration(
                 .map_err(|e| format!("Failed to read project file: {}", e))?;
             let project: Project = deserialize_object(&content, file_format)?;
 
+            let project_id = project.id.clone().unwrap_or("default".to_string());
+
             cluster_config
                 .projects
-                .insert(project.id.clone(), (project.clone(), Vec::new()));
+                .insert(project_id.clone(), (project.clone(), Vec::new()));
 
             let mut prtb_entries = read_dir(entry.path()).await.map_err(|e| format!("Failed to read PRTB directory: {}", e))?;
 
@@ -424,69 +428,15 @@ pub async fn load_configuration(
                 prtbs.push(prtb);
                 }
             }
-            if let Some((_, existing_prtbs)) = cluster_config.projects.get_mut(&project.id) {
+            if let Some((_, existing_prtbs)) = cluster_config.projects.get_mut(&project_id) {
                 existing_prtbs.extend(prtbs);
             } else {
-                return Err(format!("Project not found in cluster config: {}", project.id).into());
+                return Err(format!("Project not found in cluster config: {}", project_id).into());
             }
         }
     }
 
     Ok(Some(cluster_config))
-}
-
-/// load a specific project configuration from the base path
-///
-/// # Arguments
-/// `base_path`: The base path to load the project from
-/// `cluster_id`: The cluster ID to load the project from
-/// `project_id`: The project ID to load the project from
-/// `file_format`: The file format to load the project from
-///
-/// # Returns
-/// `Project`: The project object
-///
-#[async_backtrace::framed]
-async fn load_project(
-    base_path: &Path,
-    endpoint_url: &str,
-    cluster_id: &str,
-    project_id: &str,
-    file_format: FileFormat,
-) -> Result<Project, Box<dyn Error>> {
-    // create the path to the project
-    let project_path = base_path
-        .join(endpoint_url.replace("https://", "").replace("/", "_"))
-        .join(cluster_id)
-        .join(project_id);
-    // check if the path exists
-    
-    metadata(&project_path).await.map_err(|_| format!("Project path does not exist: {:?}", project_path))?
-        .is_dir()
-        .then(|| ())
-        .ok_or_else(|| format!("Not a directory: {:?}", project_path))?;
-
-    // build the file path
-    let project_file = project_path.join(format!(
-        "{}.{}",
-        project_id,
-        file_extension_from_format(&file_format)
-    ));
-
-    // ensure the file exists
-    metadata(&project_file)
-        .await
-        .map_err(|_| format!("Project file does not exist: {:?}", project_file))?
-        .is_file()
-        .then(|| ())
-        .ok_or_else(|| format!("Not a file: {:?}", project_file))?;
-
-    // read and deserialize
-    let content = read_to_string(&project_file)
-        .await
-        .map_err(|e| format!("Failed to read file {:?}: {}", project_file, e))?;
-
-    Ok(deserialize_object(&content, &file_format)?)
 }
 
 /// Recursively remove fields from a JSON Value based on a list of dot-separated paths.
@@ -519,6 +469,22 @@ fn remove_path_and_return(value: &mut Value, path: &[&str]) -> Option<Value> {
     // Remove the target key
     current.as_object_mut().unwrap().remove(last_key)
 }
+
+
+// load an object from the file path specified
+pub async fn load_object<T: serde::de::DeserializeOwned>(
+    file_path: &Path, file_format: &FileFormat
+) -> Result<T, Box<dyn std::error::Error>> {
+    let contents = read_to_string(file_path).await?;
+    match file_format {
+        FileFormat::Yaml => Ok(serde_yaml::from_str(&contents)?),
+        FileFormat::Json => Ok(serde_json::from_str(&contents)?),
+        FileFormat::Toml => Ok(toml::from_str(&contents)?),
+    }
+    
+}
+
+
 
 /// serialize the object to the file format specified
 pub fn serialize_object<T: serde::Serialize>(
@@ -599,3 +565,4 @@ pub enum ObjectType {
     RoleTemplate,
     ProjectRoleTemplateBinding,
 }
+

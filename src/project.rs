@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use serde::{Deserialize, Serialize};
 use serde_diff::SerdeDiff;
 
@@ -24,8 +26,9 @@ use rancher_client::{
         IoK8sApimachineryPkgApisMetaV1ObjectMeta, IoK8sApimachineryPkgApisMetaV1Patch,
     },
 };
+use tokio::fs::{metadata, read_to_string};
 
-use crate::ResourceVersionMatch;
+use crate::{deserialize_object, file::{file_extension_from_format, FileFormat}, ResourceVersionMatch};
 
 use crate::diff::diff_boxed_hashmap_string_string;
 
@@ -259,45 +262,121 @@ pub async fn update_project(
 /// # Errors
 /// * `Error<CreateManagementCattleIoV3NamespacedProjectError>` - The error that occurred during the request
 /// 
-pub async fn create_project(configuration: &Configuration, cluster_id: &str, body: Project ) -> Result<IoCattleManagementv3Project, Error<CreateManagementCattleIoV3NamespacedProjectError>> {
-
-    let body: IoCattleManagementv3Project = IoCattleManagementv3Project::try_from(body).expect("Failed to convert Project to IoCattleManagementv3Project");
-
-    let result = create_management_cattle_io_v3_namespaced_project(configuration, cluster_id, body, None, None, Some(crate::FULL_CLIENT_ID), None).await;
+pub async fn create_project(
+    configuration: &Configuration,
+    cluster_id: &str,
+    body: IoCattleManagementv3Project,
+) -> Result<IoCattleManagementv3Project, Error<CreateManagementCattleIoV3NamespacedProjectError>> {
+    let result = create_management_cattle_io_v3_namespaced_project(
+        configuration,
+        cluster_id,
+        body,
+        None,
+        None,
+        Some(crate::FULL_CLIENT_ID),
+        None,
+    )
+    .await;
 
     match result {
-        Err(e) => Err(e),
         Ok(response_content) => {
-            // Match on the status code and deserialize accordingly
             match response_content.status {
-                StatusCode::OK => {
-                    // Try to deserialize the content into IoCattleManagementv3Project (Status200 case)
-                    match serde_json::from_str(&response_content.content) {
-                        Ok(data) => Ok(data),
-                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
-                    }
+                StatusCode::OK | StatusCode::CREATED => {
+                    serde_json::from_str(&response_content.content)
+                        .map_err(Error::Serde)
                 }
                 _ => {
-                    // If not status 200, treat as UnknownValue
-                    match serde_json::from_str::<serde_json::Value>(&response_content.content) {
-                        Ok(unknown_data) => Err(Error::ResponseError(ResponseContent {
-                            status: response_content.status,
-                            content: response_content.content,
-                            entity: Some(
-                                CreateManagementCattleIoV3NamespacedProjectError::UnknownValue(
-                                    unknown_data,
-                                ),
-                            ),
-                        })),
-                        Err(unknown_deserialize_err) => Err(Error::Serde(unknown_deserialize_err)),
-                    }
+                    // Unexpected success status
+                    let unknown_value: serde_json::Value =
+                        serde_json::from_str(&response_content.content).unwrap_or_default();
+                    Err(Error::ResponseError(ResponseContent {
+                        status: response_content.status,
+                        content: response_content.content,
+                        entity: Some(CreateManagementCattleIoV3NamespacedProjectError::UnknownValue(
+                            unknown_value,
+                        )),
+                    }))
                 }
             }
         }
+
+        Err(Error::ResponseError(resp)) => {
+            if resp.status == StatusCode::CONFLICT {
+                // Deserialize conflict info and return it as a structured error
+                match serde_json::from_str::<serde_json::Value>(&resp.content) {
+                    Ok(conflict_value) => Err(Error::ResponseError(ResponseContent {
+                        status: resp.status,
+                        content: resp.content,
+                        entity: Some(CreateManagementCattleIoV3NamespacedProjectError::UnknownValue(
+                            conflict_value,
+                        )),
+                    })),
+                    Err(e) => Err(Error::Serde(e)),
+                }
+            } else {
+                // Pass through all other response errors
+                Err(Error::ResponseError(resp))
+            }
+        }
+
+        Err(err) => Err(err), // Reqwest, Serde, IO, etc.
     }
-
-
 }
+
+/// load a specific project configuration from the base path
+///
+/// # Arguments
+/// `base_path`: The base path to load the project from
+/// `cluster_id`: The cluster ID to load the project from
+/// `project_id`: The project ID to load the project from
+/// `file_format`: The file format to load the project from
+///
+/// # Returns
+/// `Project`: The project object
+///
+#[async_backtrace::framed]
+pub async fn load_project(
+    base_path: &Path,
+    endpoint_url: &str,
+    cluster_id: &str,
+    project_name: &str,
+    file_format: FileFormat,
+) -> Result<Project, Box<dyn std::error::Error>> {
+    // create the path to the project
+    let project_path = base_path
+        .join(endpoint_url.replace("https://", "").replace("/", "_"))
+        .join(cluster_id)
+        .join(project_name);
+    // check if the path exists
+    
+    metadata(&project_path).await.map_err(|_| format!("Project path does not exist: {:?}", project_path))?
+        .is_dir()
+        .then(|| ())
+        .ok_or_else(|| format!("Not a directory: {:?}", project_path))?;
+
+    // build the file path
+    let project_file = project_path.join(format!(
+        "{}.{}",
+        project_name,
+        file_extension_from_format(&file_format)
+    ));
+
+    // ensure the file exists
+    metadata(&project_file)
+        .await
+        .map_err(|_| format!("Project file does not exist: {:?}", project_file))?
+        .is_file()
+        .then(|| ())
+        .ok_or_else(|| format!("Not a file: {:?}", project_file))?;
+
+    // read and deserialize
+    let content = read_to_string(&project_file)
+        .await
+        .map_err(|e| format!("Failed to read file {:?}: {}", project_file, e))?;
+
+    Ok(deserialize_object(&content, &file_format)?)
+}
+
 
 #[derive(Serialize, Deserialize, SerdeDiff, Debug, Clone, PartialEq)]
 pub struct Project {
@@ -305,7 +384,8 @@ pub struct Project {
     pub cluster_name: String,
 
     /// Unique project ID (typically the Kubernetes metadata.name).
-    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
 
     /// Human-readable description of the project.
     pub description: String,
@@ -360,7 +440,7 @@ impl Project {
         description: String,
         display_name: String,
         enable_project_monitoring: Option<bool>,
-        id: String,
+        id: Option<String>,
         labels: Option<std::collections::HashMap<String, String>>,
         namespace_default_resource_quota: Option<
             IoCattleManagementv3ProjectSpecNamespaceDefaultResourceQuota,
@@ -426,7 +506,7 @@ impl TryFrom<IoCattleManagementv3Project> for Project {
             description: spec.description.unwrap_or_default(),
             display_name: spec.display_name,
             enable_project_monitoring: spec.enable_project_monitoring,
-            id: metadata.name.ok_or("missing metadata.name")?,
+            id: metadata.name,
             labels,
             namespace_default_resource_quota,
             namespace: metadata.namespace.unwrap_or_default(),
@@ -443,7 +523,7 @@ impl TryFrom<Project> for IoCattleManagementv3Project {
     fn try_from(value: Project) -> Result<Self, Self::Error> {
         // Construct metadata
         let metadata = IoK8sApimachineryPkgApisMetaV1ObjectMeta {
-            name: Some(value.id.clone()),
+            name: value.id.clone(),
             annotations: value.annotations.clone().map(|a| {
                 a.into_iter()
                     .collect::<std::collections::HashMap<String, String>>()
@@ -531,7 +611,7 @@ impl PartialEq<Project> for IoCattleManagementv3Project {
                 .collect::<std::collections::HashMap<String, String>>()
         });
 
-        metadata.name.as_deref() == Some(&other.id)
+        metadata.name == other.id
             && spec.cluster_name == other.cluster_name
             && spec.description.as_deref().unwrap_or_default() == other.description
             && spec.display_name == other.display_name
@@ -624,7 +704,7 @@ mod tests {
             description: "Test project".to_string(),
             display_name: "Project One".to_string(),
             enable_project_monitoring: Some(true),
-            id: "proj-1".to_string(),
+            id: Some("proj-1".to_string()),
             labels: Some(std::collections::HashMap::new()),
             namespace_default_resource_quota: None,
             namespace: "cluster-1".to_string(),

@@ -112,7 +112,7 @@ pub async fn get_project_role_template_bindings(
 /// # Arguments
 ///
 /// * `configuration` - The configuration to use for the request
-/// * `cluster_id` - The ID of the cluster (namespace) to get the project role template bindings for
+/// * `project_id` - The ID of the project (namespace) to get the role template bindings for
 ///
 /// # Returns
 ///
@@ -282,41 +282,54 @@ pub async fn update_project_role_template_binding(
 pub async fn create_project_role_template_binding(
     configuration: &Configuration,
     project_id: &str,
-    body: ProjectRoleTemplateBinding,
+    body: IoCattleManagementv3ProjectRoleTemplateBinding,
 ) -> Result<IoCattleManagementv3ProjectRoleTemplateBinding, Error<CreateManagementCattleIoV3NamespacedProjectRoleTemplateBindingError>> {
     let body: IoCattleManagementv3ProjectRoleTemplateBinding = IoCattleManagementv3ProjectRoleTemplateBinding::try_from(body).expect("Failed to convert ProjectRoleTemplateBinding into IoCattleManagementv3ProjectRoleTemplateBinding");
 
     let result = create_management_cattle_io_v3_namespaced_project_role_template_binding(configuration, project_id, body, None, None, Some(crate::FULL_CLIENT_ID), None).await;
 
     match result {
-        Err(e) => Err(e),
         Ok(response_content) => {
-            // Match on the status code and deserialize accordingly
             match response_content.status {
-                StatusCode::OK => {
-                    // Try to deserialize the content into IoCattleManagementv3Project (Status200 case)
-                    match serde_json::from_str(&response_content.content) {
-                        Ok(data) => Ok(data),
-                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
-                    }
+                StatusCode::OK | StatusCode::CREATED => {
+                    serde_json::from_str(&response_content.content)
+                        .map_err(Error::Serde)
                 }
                 _ => {
-                    // If not status 200, treat as UnknownValue
-                    match serde_json::from_str::<serde_json::Value>(&response_content.content) {
-                        Ok(unknown_data) => Err(Error::ResponseError(ResponseContent {
-                            status: response_content.status,
-                            content: response_content.content,
-                            entity: Some(
-                                CreateManagementCattleIoV3NamespacedProjectRoleTemplateBindingError::UnknownValue(
-                                    unknown_data,
-                                ),
-                            ),
-                        })),
-                        Err(unknown_deserialize_err) => Err(Error::Serde(unknown_deserialize_err)),
-                    }
+                    // Unexpected success status
+                    let unknown_value: serde_json::Value =
+                        serde_json::from_str(&response_content.content).unwrap_or_default();
+                    Err(Error::ResponseError(ResponseContent {
+                        status: response_content.status,
+                        content: response_content.content,
+                        entity: Some(CreateManagementCattleIoV3NamespacedProjectRoleTemplateBindingError::UnknownValue(
+                            unknown_value,
+                        )),
+                    }))
                 }
             }
         }
+
+        Err(Error::ResponseError(resp)) => {
+            if resp.status == StatusCode::CONFLICT {
+                // Deserialize conflict info and return it as a structured error
+                match serde_json::from_str::<serde_json::Value>(&resp.content) {
+                    Ok(conflict_value) => Err(Error::ResponseError(ResponseContent {
+                        status: resp.status,
+                        content: resp.content,
+                        entity: Some(CreateManagementCattleIoV3NamespacedProjectRoleTemplateBindingError::UnknownValue(
+                            conflict_value,
+                        )),
+                    })),
+                    Err(e) => Err(Error::Serde(e)),
+                }
+            } else {
+                // Pass through all other response errors
+                Err(Error::ResponseError(resp))
+            }
+        }
+
+        Err(err) => Err(err), // Reqwest, Serde, IO, etc.
     }
 }
 

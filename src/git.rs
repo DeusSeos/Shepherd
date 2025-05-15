@@ -1,8 +1,10 @@
-use std::{error::Error, ffi::OsString, path::{Path, PathBuf}};
+use std::{error::Error, path::{Path, PathBuf}};
 
 use async_recursion::async_recursion;
 use git2::{Commit, IndexAddOption, ProxyOptions, PushOptions, Repository, Signature, Status};
 use tokio::fs::read_dir;
+
+use crate::ObjectType;
 
 
 /// Initialize a local git repository in the folder
@@ -252,7 +254,7 @@ pub fn commit_changes(folder_path: &Path, message: &str) -> Result<(), String> {
 #[async_recursion]
 pub async fn get_new_uncommited_files(
     folder_path: &Path,
-) -> Result<Vec<PathBuf>, Box<dyn Error>> {
+) -> Result<Vec<(ObjectType, PathBuf)>, Box<dyn Error>> {
     let repo = Repository::discover(folder_path)
         .map_err(|e| format!("Failed to open Git repo: {}", e))?;
     let workdir = repo
@@ -268,12 +270,8 @@ pub async fn get_new_uncommited_files(
         .map_err(|e| format!("Failed to read dir entry: {}", e))?
     {
         let path = entry.path();
-        let file_name_os: OsString = entry.file_name();
+        let name = entry.file_name().to_string_lossy().to_string();
 
-        let name = file_name_os
-            .to_string_lossy();
-
-        // Skip the .git directory entirely
         if entry.file_type().await?.is_dir() && name == ".git" {
             continue;
         }
@@ -284,24 +282,50 @@ pub async fn get_new_uncommited_files(
             .map_err(|e| format!("Failed to stat {:?}: {}", path, e))?;
 
         if metadata.is_dir() {
-            // recurse into subdirectory
             let mut child = get_new_uncommited_files(&path).await?;
             new_files.append(&mut child);
         } else if metadata.is_file() {
-            // compute path relative to repo root
             let rel = path.strip_prefix(workdir)
                 .map_err(|_| format!("File not under workdir: {:?}", path))?;
 
-            // check git status
             let status = repo.status_file(rel)
                 .map_err(|e| format!("Git status error for {:?}: {}", rel, e))?;
 
             if status.contains(Status::WT_NEW) {
-                new_files.push(path);
+                // Determine object type from path
+                let object_type = determine_object_type(rel);
+                new_files.push((object_type, path));
             }
         }
     }
 
     Ok(new_files)
 }
+
+
+
+fn determine_object_type(path: &Path) -> ObjectType {
+    let filename = path.file_stem().and_then(|f| f.to_str()).unwrap_or_default();
+    let parent = path.parent().and_then(|p| p.file_name()).and_then(|p| p.to_str()).unwrap_or_default();
+
+    if path.components().any(|c| c.as_os_str() == "roles") {
+        ObjectType::RoleTemplate
+    } else if filename != parent {
+        // If the filename doesn't match the directory name, and it's inside a project folder (likely PRTB)
+        ObjectType::ProjectRoleTemplateBinding
+    } else if filename == parent {
+        // This would match `.../cluster-id/cluster-id.yaml` or `.../project-name/project-name.yaml`
+        if path.ancestors().nth(2)  // e.g. .../cluster-id
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str()) == Some(parent)
+        {
+            ObjectType::Cluster
+        } else {
+            ObjectType::Project
+        }
+    } else {
+        ObjectType::Project
+    }
+}
+
 

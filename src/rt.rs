@@ -185,41 +185,52 @@ pub async fn update_role_template(configuration: &Configuration,
 /// # Errors
 /// * `Error<CreateManagementCattleIoV3RoleTemplateError>` - The error that occurred during the request
 /// 
-pub async fn create_role_template(configuration: &Configuration, body: RoleTemplate) -> Result<IoCattleManagementv3RoleTemplate, Error<CreateManagementCattleIoV3RoleTemplateError>> {
-
-    let body: IoCattleManagementv3RoleTemplate = IoCattleManagementv3RoleTemplate::try_from(body).expect("Failed to convert RoleTemplate into IoCattleManagementv3RoleTemplate");
+pub async fn create_role_template(configuration: &Configuration, body: IoCattleManagementv3RoleTemplate) -> Result<IoCattleManagementv3RoleTemplate, Error<CreateManagementCattleIoV3RoleTemplateError>> {
 
     let result = create_management_cattle_io_v3_role_template(configuration, body, None, None, Some(crate::FULL_CLIENT_ID), None).await;
 
     match result {
-        Err(e) => Err(e),
         Ok(response_content) => {
-            // Match on the status code and deserialize accordingly
             match response_content.status {
-                StatusCode::OK => {
-                    // Try to deserialize the content into IoCattleManagementv3Project (Status200 case)
-                    match serde_json::from_str(&response_content.content) {
-                        Ok(data) => Ok(data),
-                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
-                    }
+                StatusCode::OK | StatusCode::CREATED => {
+                    serde_json::from_str(&response_content.content)
+                        .map_err(Error::Serde)
                 }
                 _ => {
-                    // If not status 200, treat as UnknownValue
-                    match serde_json::from_str::<serde_json::Value>(&response_content.content) {
-                        Ok(unknown_data) => Err(Error::ResponseError(ResponseContent {
-                            status: response_content.status,
-                            content: response_content.content,
-                            entity: Some(
-                                CreateManagementCattleIoV3RoleTemplateError::UnknownValue(
-                                    unknown_data,
-                                ),
-                            ),
-                        })),
-                        Err(unknown_deserialize_err) => Err(Error::Serde(unknown_deserialize_err)),
-                    }
+                    // Unexpected success status
+                    let unknown_value: serde_json::Value =
+                        serde_json::from_str(&response_content.content).unwrap_or_default();
+                    Err(Error::ResponseError(ResponseContent {
+                        status: response_content.status,
+                        content: response_content.content,
+                        entity: Some(CreateManagementCattleIoV3RoleTemplateError::UnknownValue(
+                            unknown_value,
+                        )),
+                    }))
                 }
             }
         }
+
+        Err(Error::ResponseError(resp)) => {
+            if resp.status == StatusCode::CONFLICT {
+                // Deserialize conflict info and return it as a structured error
+                match serde_json::from_str::<serde_json::Value>(&resp.content) {
+                    Ok(conflict_value) => Err(Error::ResponseError(ResponseContent {
+                        status: resp.status,
+                        content: resp.content,
+                        entity: Some(CreateManagementCattleIoV3RoleTemplateError::UnknownValue(
+                            conflict_value,
+                        )),
+                    })),
+                    Err(e) => Err(Error::Serde(e)),
+                }
+            } else {
+                // Pass through all other response errors
+                Err(Error::ResponseError(resp))
+            }
+        }
+
+        Err(err) => Err(err), // Reqwest, Serde, IO, etc.
     }
 
 
