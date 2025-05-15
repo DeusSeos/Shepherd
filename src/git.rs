@@ -299,6 +299,13 @@ pub async fn get_new_uncommited_files(
         }
     }
 
+    new_files.sort_by_key(|(object_type, _)| match object_type {
+    ObjectType::RoleTemplate => 0,
+    ObjectType::Project => 1,
+    ObjectType::ProjectRoleTemplateBinding => 2,
+    ObjectType::Cluster => 3, // optional: push clusters to the end
+});
+
     Ok(new_files)
 }
 

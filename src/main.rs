@@ -10,7 +10,7 @@ use rancher_cac::file::FileFormat;
 use rancher_cac::prtb::{create_project_role_template_binding, ProjectRoleTemplateBinding};
 use rancher_cac::rt::{create_role_template, RoleTemplate};
 use rancher_cac::update::compare_and_update_configurations;
-use rancher_cac::{ download_current_configuration, load_configuration, load_configuration_from_rancher, load_object, rancher_config_init, ObjectType};
+use rancher_cac::{ create_objects, download_current_configuration, load_configuration, load_configuration_from_rancher, load_object, rancher_config_init, CreatedObject, ObjectType};
 use rancher_cac::diff::{compute_cluster_diff, create_json_patch};
 use rancher_cac::git::{commit_changes, get_new_uncommited_files, init_git_repo_with_main_branch, push_repo_to_remote};
 use rancher_cac::project::{load_project, create_project, find_project, get_projects, show_project_diff, show_text_diff, update_project, Project, PROJECT_EXCLUDE_PATHS};
@@ -112,36 +112,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let new_files = get_new_uncommited_files(&path).await?;
     println!("New files: {:?}", new_files);
 
-    for (object_type, file_path) in new_files {
-        match object_type {
-            ObjectType::Cluster => {
-                let cluster = load_object::<Cluster>(&file_path, &file_format).await;
-                println!("Loaded cluster: {:?}", cluster);
-            }
-            ObjectType::Project => {
-                let project = load_object::<Project>(&file_path, &file_format).await?;
-                let rancher_p = IoCattleManagementv3Project::try_from(project).unwrap();
-                println!("Loaded project: {:#?}", rancher_p);
-                let cluster_name = rancher_p.spec.as_ref().and_then(|spec| Some(spec.cluster_name.clone())).unwrap();
-                let created_p = create_project(&configuration, &cluster_name , rancher_p).await?;
+    let created_objects = create_objects(&configuration, new_files, &file_format).await;
+    for object_type in created_objects {
+        let error = object_type.map(|created_object| match created_object {
+            CreatedObject::ProjectRoleTemplateBinding(created) => println!("Created PRTB: {:#?}", created),
+            CreatedObject::Project(created) => println!("Created Project: {:#?}", created),
+            CreatedObject::RoleTemplate(created) => println!("Created Role Template: {:#?}", created),
+        });
 
-            }
-            ObjectType::RoleTemplate => {
-                let role_template = load_object::<RoleTemplate>(&file_path, &file_format).await?;
-                // TODO: find a better way to convert from the two types
-                let rancher_rt = IoCattleManagementv3RoleTemplate::try_from(role_template).unwrap();
-                println!("Loaded role template: {:#?}", rancher_rt);
-                let created_rt = create_role_template(&configuration, rancher_rt).await?;
-            }
-            ObjectType::ProjectRoleTemplateBinding => {
-                let project_role_template_binding = load_object::<ProjectRoleTemplateBinding>(&file_path, &file_format).await?;
-                let rancher_prtb = IoCattleManagementv3ProjectRoleTemplateBinding::try_from(project_role_template_binding).unwrap();
-                println!("Loaded project role template binding: {:#?}", rancher_prtb);
-                let project_id = rancher_prtb.metadata.as_ref().unwrap().namespace.clone().unwrap();
-                println!("Project name: {:#?}", project_id);
-                let created_prtb = create_project_role_template_binding(&configuration, &project_id, rancher_prtb).await;
-                println!("Created project-role-template binding: {:?}", created_prtb);
-            }
+        match error {
+            Err(e) => eprintln!("Error creating object: {:?}", e),
+            _ => {}
         }
     }
 

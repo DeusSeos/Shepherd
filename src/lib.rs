@@ -15,14 +15,14 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::error::Error;
 use std::option::Option;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tokio::fs::{create_dir_all, read_dir, read_to_string, write};
 
 use cluster::Cluster;
 use config::{ClusterConfig, RancherClusterConfig};
-use project::Project;
-use prtb::ProjectRoleTemplateBinding;
-use rt::{get_role_templates, RoleTemplate};
+use project::{create_project, Project};
+use prtb::{create_project_role_template_binding, ProjectRoleTemplateBinding};
+use rt::{create_role_template, get_role_templates, RoleTemplate};
 
 use rancher_client::apis::configuration::{ApiKey, Configuration};
 use rancher_client::models::{
@@ -484,6 +484,75 @@ pub async fn load_object<T: serde::de::DeserializeOwned>(
     
 }
 
+pub async fn create_objects(
+    configuration: &Configuration,
+    new_files: Vec<(ObjectType, PathBuf)>,
+    file_format: &FileFormat,
+) -> Vec<Result<CreatedObject, Box<dyn std::error::Error>>> {
+    let mut results = Vec::new();
+
+    for (object_type, file_path) in new_files {
+        let result = match object_type {
+            ObjectType::Cluster => {
+                // Not implemented yet
+                Err("Cluster creation not implemented".into())
+            }
+
+            ObjectType::Project => {
+                async {
+                    let project = load_object::<Project>(&file_path, file_format).await?;
+                    let display_name = project.display_name.clone();
+                    let rancher_p = IoCattleManagementv3Project::try_from(project)?;
+                    let cluster_name = rancher_p
+                        .spec
+                        .as_ref()
+                        .ok_or("Missing spec")?
+                        .cluster_name
+                        .clone();
+                    let created = create_project(configuration, &cluster_name, rancher_p).await?;
+                    println!("Created project: {}", display_name);
+                    Ok(CreatedObject::Project(created))
+                }
+                .await
+            }
+
+            ObjectType::RoleTemplate => {
+                async {
+                    let role_template = load_object::<RoleTemplate>(&file_path, file_format).await?;
+                    let display_name = role_template.display_name.clone();
+                    let rancher_rt = IoCattleManagementv3RoleTemplate::try_from(role_template)?;
+                    let created = create_role_template(configuration, rancher_rt).await?;
+                    println!("Created role template: {}", display_name.unwrap_or_default());
+                    Ok(CreatedObject::RoleTemplate(created))
+                }
+                .await
+            }
+
+            ObjectType::ProjectRoleTemplateBinding => {
+                async {
+                    let prtb = load_object::<ProjectRoleTemplateBinding>(&file_path, file_format).await?;
+                    let display_name = prtb.id.clone();
+                    let rancher_prtb = IoCattleManagementv3ProjectRoleTemplateBinding::try_from(prtb)?;
+                    let project_id = rancher_prtb
+                        .metadata
+                        .as_ref()
+                        .and_then(|m| m.namespace.clone())
+                        .ok_or("Missing namespace in metadata")?;
+                    let created = create_project_role_template_binding(configuration, &project_id, rancher_prtb).await?;
+                    println!("Created PRTB: {}", display_name);
+                    Ok(CreatedObject::ProjectRoleTemplateBinding(created))
+                }
+                .await
+            }
+        };
+
+        results.push(result);
+    }
+
+    results
+}
+
+
 
 
 /// serialize the object to the file format specified
@@ -560,9 +629,17 @@ impl std::str::FromStr for ResourceVersionMatch {
 ///
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ObjectType {
-    Cluster,
-    Project,
     RoleTemplate,
+    Project,
     ProjectRoleTemplateBinding,
+    Cluster,
+}
+
+
+pub enum CreatedObject {
+    // Cluster(Cluster),
+    Project(IoCattleManagementv3Project),
+    RoleTemplate(IoCattleManagementv3RoleTemplate),
+    ProjectRoleTemplateBinding(IoCattleManagementv3ProjectRoleTemplateBinding),
 }
 
