@@ -28,9 +28,9 @@ use rancher_client::{
 };
 use tokio::fs::{metadata, read_to_string};
 
-use crate::{deserialize_object, file::{file_extension_from_format, FileFormat}, ResourceVersionMatch};
+use crate::{deserialize_object, file::{file_extension_from_format, FileFormat}, };
 
-use crate::models::ConversionError;
+use crate::models::{ConversionError, ResourceVersionMatch};
 
 use crate::diff::diff_boxed_hashmap_string_string;
 

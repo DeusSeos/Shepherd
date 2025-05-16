@@ -1,6 +1,7 @@
 use std::path::Path;
 
 
+#[derive(Clone, Copy)]
 pub enum FileFormat {
     Yaml,
     Json,

@@ -4,7 +4,7 @@ use async_recursion::async_recursion;
 use git2::{Commit, IndexAddOption, ProxyOptions, PushOptions, Repository, Signature, Status};
 use tokio::fs::read_dir;
 
-use crate::ObjectType;
+use crate::models::ObjectType;
 
 
 /// Initialize a local git repository in the folder

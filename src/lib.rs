@@ -11,6 +11,7 @@ pub mod update;
 pub mod models;
 
 use file::{file_extension_from_format, FileFormat};
+use models::{CreatedObject, ObjectType};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::AsyncWriteExt;
@@ -111,7 +112,7 @@ pub async fn download_current_configuration(
     let role_templates: Vec<RoleTemplate> = rancher_role_templates
         .items
         .into_iter()
-        .map(|item| item.try_into().map_err(|e: &str| anyhow::anyhow!(e)).context("Failed to convert role template"))
+        .map(|item| item.try_into().context("Failed to convert role template"))
         .collect::<Result<_>>()?;
 
     for role_template in &role_templates {
@@ -563,14 +564,13 @@ pub async fn write_object_to_file<T>(
     file_path: &PathBuf,
     file_format: &FileFormat,
     object: &T,
-) -> Result<(), Box<dyn std::error::Error>>
+) -> Result<(), >
 where
     T: serde::Serialize + Send + 'static,
 {
     let serialized = serialize_object(object, file_format)?;
     let mut file = OpenOptions::new() .write(true) .truncate(true) .create(true) .open(file_path).await?;
-    file.write_all(serialized.as_bytes()).await?;
-    Ok(())
+    file.write_all(serialized.as_bytes()).await.context("Failed to write object to file")
 }
 
 
@@ -583,15 +583,9 @@ pub fn serialize_object<T: serde::Serialize>(
     file_format: &FileFormat,
 ) -> Result<String, > {
     match file_format {
-        FileFormat::Yaml => serde_yaml::to_string(object).map_err(|e| {
-            Box::<dyn Error>::from(format!("Failed to serialize object to YAML: {}", e))
-        }),
-        FileFormat::Json => serde_json::to_string_pretty(object).map_err(|e| {
-            Box::<dyn Error>::from(format!("Failed to serialize object to JSON: {}", e))
-        }),
-        FileFormat::Toml => toml::to_string_pretty(object).map_err(|e| {
-            Box::<dyn Error>::from(format!("Failed to serialize object to TOML: {}", e))
-        }),
+        FileFormat::Yaml => serde_yaml::to_string(object).context("Failed to serialize object to YAML"),
+        FileFormat::Json => serde_json::to_string_pretty(object).context("Failed to serialize object to JSON"),
+        FileFormat::Toml => toml::to_string_pretty(object).context("Failed to serialize object to TOML"),
     }
 }
 
@@ -609,59 +603,5 @@ pub fn deserialize_object<T: serde::de::DeserializeOwned>(
         FileFormat::Json => serde_json::from_str(object).map_err(|e| e.into()),
         FileFormat::Toml => toml::from_str(object).map_err(|e| e.into()),
     }
-}
-
-pub enum ResourceVersionMatch {
-    Exact,
-    NotOlderThan,
-}
-
-impl ResourceVersionMatch {
-    fn as_str(&self) -> &'static str {
-        match self {
-            ResourceVersionMatch::Exact => "Exact",
-            ResourceVersionMatch::NotOlderThan => "notOlderThan",
-        }
-    }
-}
-impl std::fmt::Display for ResourceVersionMatch {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-impl std::str::FromStr for ResourceVersionMatch {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "exact" => Ok(ResourceVersionMatch::Exact),
-            "notolderthan" => Ok(ResourceVersionMatch::NotOlderThan),
-            _ => Err(()),
-        }
-    }
-}
-
-/// The type of object to be updated in Rancher.
-///
-/// This enum represents the different types of objects that can be updated in Rancher. It includes:
-/// - `Cluster`: Represents a cluster object.
-/// - `Project`: Represents a project object.
-/// - `RoleTemplate`: Represents a role template object.
-/// - `ProjectRoleTemplateBinding`: Represents a project-role-template binding object.
-///
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum ObjectType {
-    RoleTemplate,
-    Project,
-    ProjectRoleTemplateBinding,
-    Cluster,
-}
-
-
-pub enum CreatedObject {
-    // Cluster(Cluster),
-    Project(IoCattleManagementv3Project),
-    RoleTemplate(IoCattleManagementv3RoleTemplate),
-    ProjectRoleTemplateBinding(IoCattleManagementv3ProjectRoleTemplateBinding),
 }
 

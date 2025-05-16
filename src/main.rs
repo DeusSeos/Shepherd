@@ -26,7 +26,7 @@ use rancher_cac::update::compare_and_update_configurations;
 use rancher_cac::{
     create_objects, download_current_configuration, load_configuration,
     load_configuration_from_rancher, load_object, rancher_config_init, write_object_to_file,
-    CreatedObject, ObjectType,
+    models::CreatedObject, models::ObjectType,
 };
 
 use rancher_client::models::{
@@ -158,10 +158,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     for handle in handles {
-        if let Err(join_err) = handle.await {
-            eprintln!("Task panicked: {:?}", join_err);
-        } else if let Err(err) = handle.await.unwrap() {
-            eprintln!("Task error: {:?}", err);
+        match handle.await {
+            Err(join_err) => eprintln!("Task panicked: {:?}", join_err),
+            Ok(Err(err)) => eprintln!("Task error: {:?}", err),
+            Ok(Ok(_)) => {}
         }
     }
 

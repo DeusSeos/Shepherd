@@ -13,6 +13,8 @@ use rancher_client::{
     },
 };
 
+use crate::models::ConversionError;
+
 /// Get all clusters from an endpoint using the provided configuration
 ///
 /// # Arguments
@@ -109,15 +111,15 @@ impl Cluster {
 // }
 
 impl TryFrom<IoCattleManagementv3Cluster> for Cluster {
-    type Error = &'static str;
+    type Error = ConversionError;
 
     fn try_from(value: IoCattleManagementv3Cluster) -> Result<Self, Self::Error> {
         let metadata: IoK8sApimachineryPkgApisMetaV1ObjectMeta =
-            value.metadata.ok_or("missing metadata")?;
+            value.metadata.ok_or(ConversionError::MetadataError("missing metadata".to_string()))?;
         let spec: IoCattleManagementv3ClusterSpec = *value.spec;
 
         Ok(Cluster {
-            id: metadata.name.ok_or("missing name")?,
+            id: metadata.name.ok_or(ConversionError::MissingField("missing metadata.name"))?,
             display_name: spec.display_name,
             description: spec.description,
         })
@@ -251,7 +253,7 @@ mod tests {
 
         let result = Cluster::try_from(ioc);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "missing metadata");
+        assert_eq!(result.unwrap_err(), ConversionError::MetadataError("missing metadata".to_string()));
     }
 
     #[test]
@@ -261,7 +263,7 @@ mod tests {
 
         let result = Cluster::try_from(ioc);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "missing name");
+        assert_eq!(result.unwrap_err(), ConversionError::MissingField("missing name"));
     }
 
     #[test]
