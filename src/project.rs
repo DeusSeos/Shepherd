@@ -13,8 +13,8 @@ use rancher_client::{
     apis::{
         configuration::Configuration,
         management_cattle_io_v3_api::{
-            create_management_cattle_io_v3_namespaced_project, list_management_cattle_io_v3_namespaced_project, patch_management_cattle_io_v3_namespaced_project, read_management_cattle_io_v3_namespaced_project, CreateManagementCattleIoV3NamespacedProjectError, ListManagementCattleIoV3NamespacedProjectError, PatchManagementCattleIoV3NamespacedProjectError, ReadManagementCattleIoV3NamespacedProjectError
-        },
+            create_management_cattle_io_v3_namespaced_project, delete_management_cattle_io_v3_namespaced_project, list_management_cattle_io_v3_namespaced_project, patch_management_cattle_io_v3_namespaced_project, read_management_cattle_io_v3_namespaced_project }, 
+        management_cattle_io_v3_api::{ DeleteManagementCattleIoV3NamespacedProjectError, CreateManagementCattleIoV3NamespacedProjectError, ListManagementCattleIoV3NamespacedProjectError, PatchManagementCattleIoV3NamespacedProjectError, ReadManagementCattleIoV3NamespacedProjectError},
         Error, ResponseContent,
     },
     models::{
@@ -377,6 +377,66 @@ pub async fn load_project(
         .map_err(|e| format!("Failed to read file {:?}: {}", project_file, e))?;
 
     Ok(deserialize_object(&content, &file_format)?)
+}
+
+/// Delete a project by its ID  
+/// # Arguments  
+/// * `configuration` - The configuration to use for the request  
+/// * `cluster_id` - The ID of the cluster (namespace) containing the project  
+/// * `project_id` - The ID of the project to delete  
+/// # Returns  
+/// * `IoCattleManagementv3Project` - The deleted project  
+/// # Errors  
+/// * `Error<DeleteManagementCattleIoV3NamespacedProjectError>` - The error that occurred while trying to delete the project  
+#[async_backtrace::framed]  
+pub async fn delete_project(  
+    configuration: &Configuration,  
+    cluster_id: &str,  
+    project_id: &str,                       //DeleteManagementCattleIoV3NamespacedProjectError
+) -> Result<IoCattleManagementv3Project, Error<DeleteManagementCattleIoV3NamespacedProjectError>> {  
+    let result = delete_management_cattle_io_v3_namespaced_project(  
+        configuration,  
+        project_id,  
+        cluster_id,  
+        None, // grace_period_seconds  
+        None, // orphan_dependents  
+        None, // propagation_policy  
+        None, // dry_run  
+        None, // body  
+        None, // pretty
+    )  
+    .await;  
+  
+    match result {  
+        Err(e) => Err(e),  
+        Ok(response_content) => {  
+            // Match on the status code and deserialize accordingly  
+            match response_content.status {  
+                StatusCode::OK => {  
+                    // Try to deserialize the content into IoCattleManagementv3Project (Status200 case)  
+                    match serde_json::from_str(&response_content.content) {  
+                        Ok(data) => Ok(data),  
+                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),  
+                    }  
+                }  
+                _ => {  
+                    // If not status 200, treat as UnknownValue  
+                    match serde_json::from_str::<serde_json::Value>(&response_content.content) {  
+                        Ok(unknown_data) => Err(Error::ResponseError(ResponseContent {  
+                            status: response_content.status,  
+                            content: response_content.content,  
+                            entity: Some(  
+                                DeleteManagementCattleIoV3NamespacedProjectError::UnknownValue(  
+                                    unknown_data,  
+                                ),  
+                            ),  
+                        })),  
+                        Err(unknown_deserialize_err) => Err(Error::Serde(unknown_deserialize_err)),  
+                    }  
+                }  
+            }  
+        }  
+    }  
 }
 
 
