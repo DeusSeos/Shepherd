@@ -8,15 +8,18 @@ pub mod project;
 pub mod prtb;
 pub mod rt;
 pub mod update;
+pub mod models;
 
 use file::{file_extension_from_format, FileFormat};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::io::AsyncWriteExt;
 use std::collections::HashMap;
 use std::error::Error;
 use std::option::Option;
 use std::path::{Path, PathBuf};
-use tokio::fs::{create_dir_all, read_dir, read_to_string, write};
+use tokio::fs::{create_dir_all, read_dir, read_to_string, write, OpenOptions};
+use anyhow::{Result, Context, bail};
 
 use cluster::Cluster;
 use config::{ClusterConfig, RancherClusterConfig};
@@ -79,15 +82,15 @@ pub async fn download_current_configuration(
     configuration: &Configuration,
     path: &Path,
     file_format: &FileFormat,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<()> {
     let rancher_cluster = cluster::get_clusters(configuration)
         .await
-        .map_err(|e| format!("Failed to get clusters: {e:?}"))?;
+        .context("Failed to get clusters")?;
 
     let rancher_role_templates =
         get_role_templates(configuration, None, None, None, None, None, None)
             .await
-            .map_err(|e| format!("Failed to get role templates: {e:?}"))?;
+            .context("Failed to get role templates")?;
 
     let base_path = path.join(
         configuration
@@ -97,26 +100,19 @@ pub async fn download_current_configuration(
             .replace('/', "_"),
     );
     if !base_path.exists() {
-        create_dir_all(&base_path)
-            .await
-            .map_err(|e| format!("Failed to create folder: {e:?}"))?;
+        create_dir_all(&base_path).await.context("Failed to create base folder")?;
     }
 
     let role_template_path = base_path.join("roles");
     if !role_template_path.exists() {
-        create_dir_all(&role_template_path)
-            .await
-            .map_err(|e| format!("Failed to create folder: {e:?}"))?;
+        create_dir_all(&role_template_path).await.context("Failed to create role templates folder")?;
     }
 
     let role_templates: Vec<RoleTemplate> = rancher_role_templates
         .items
         .into_iter()
-        .map(|item| {
-            item.try_into()
-                .map_err(|e| format!("Failed to convert role template: {e}"))
-        })
-        .collect::<Result<_, _>>()?;
+        .map(|item| item.try_into().map_err(|e: &str| anyhow::anyhow!(e)).context("Failed to convert role template"))
+        .collect::<Result<_>>()?;
 
     for role_template in &role_templates {
         let role_template_file = role_template_path.join(format!(
@@ -129,24 +125,19 @@ pub async fn download_current_configuration(
             serialize_object(role_template, file_format)?,
         )
         .await
-        .map_err(|e| format!("Failed to write file {:?}: {e}", role_template_file))?;
+        .with_context(|| format!("Failed to write file {:?}", role_template_file))?;
     }
 
     let clusters: Vec<Cluster> = rancher_cluster
         .items
         .into_iter()
-        .map(|item| {
-            item.try_into()
-                .map_err(|e| format!("Failed to convert cluster: {e:?}"))
-        })
-        .collect::<Result<_, _>>()?;
+        .map(|item| item.try_into().context("Failed to convert cluster"))
+        .collect::<Result<_>>()?;
 
     for cluster in &clusters {
         let cluster_path = base_path.join(&cluster.id);
         if !cluster_path.exists() {
-            create_dir_all(&cluster_path)
-                .await
-                .map_err(|e| format!("Failed to create folder: {e:?}"))?;
+            create_dir_all(&cluster_path).await.context("Failed to create cluster folder")?;
         }
 
         let cluster_file = cluster_path.join(format!(
@@ -156,7 +147,7 @@ pub async fn download_current_configuration(
         ));
         write(&cluster_file, serialize_object(cluster, file_format)?)
             .await
-            .map_err(|e| format!("Failed to write file: {e:?}"))?;
+            .with_context(|| format!("Failed to write cluster file {:?}", cluster_file))?;
 
         let rancher_projects = project::get_projects(
             configuration,
@@ -169,23 +160,18 @@ pub async fn download_current_configuration(
             None,
         )
         .await
-        .map_err(|e| format!("Failed to get projects: {e:?}"))?;
+        .context("Failed to get projects")?;
 
         let projects: Vec<Project> = rancher_projects
             .items
             .into_iter()
-            .map(|item| {
-                item.try_into()
-                    .map_err(|e| format!("Failed to convert project: {e:?}"))
-            })
-            .collect::<Result<_, _>>()?;
+            .map(|item| item.try_into().context("Failed to convert project"))
+            .collect::<Result<_>>()?;
 
         for project in &projects {
             let project_path = cluster_path.join(&project.display_name);
             if !project_path.exists() {
-                create_dir_all(&project_path)
-                    .await
-                    .map_err(|e| format!("Failed to create folder: {e:?}"))?;
+                create_dir_all(&project_path).await.context("Failed to create project folder")?;
             }
 
             let project_file = project_path.join(format!(
@@ -195,7 +181,7 @@ pub async fn download_current_configuration(
             ));
             write(&project_file, serialize_object(project, file_format)?)
                 .await
-                .map_err(|e| format!("Failed to write file: {e:?}"))?;
+                .with_context(|| format!("Failed to write project file {:?}", project_file))?;
 
             let rancher_prtbs = prtb::get_namespaced_project_role_template_bindings(
                 configuration,
@@ -208,16 +194,13 @@ pub async fn download_current_configuration(
                 None,
             )
             .await
-            .map_err(|e| format!("Failed to get PRTBs: {e:?}"))?;
+            .context("Failed to get project role template bindings")?;
 
             let prtbs: Vec<ProjectRoleTemplateBinding> = rancher_prtbs
                 .items
                 .into_iter()
-                .map(|item| {
-                    item.try_into()
-                        .map_err(|e| format!("Failed to convert PRTB: {e:?}"))
-                })
-                .collect::<Result<_, _>>()?;
+                .map(|item| item.try_into().context("Failed to convert project role template binding"))
+                .collect::<Result<_>>()?;
 
             for prtb in &prtbs {
                 let prtb_file = project_path.join(format!(
@@ -227,7 +210,7 @@ pub async fn download_current_configuration(
                 ));
                 write(&prtb_file, serialize_object(prtb, file_format)?)
                     .await
-                    .map_err(|e| format!("Failed to write file: {e:?}"))?;
+                    .with_context(|| format!("Failed to write PRTB file {:?}", prtb_file))?;
             }
         }
     }
@@ -235,33 +218,30 @@ pub async fn download_current_configuration(
     Ok(())
 }
 
+
 #[async_backtrace::framed]
 pub async fn load_configuration_from_rancher(
     configuration: &Configuration,
     cluster_id: &str,
-) -> Result<RancherClusterConfig, Box<dyn Error>> {
+) -> Result<RancherClusterConfig> {
     // Get the current configuration from the Rancher API
     let rancher_clusters = cluster::get_clusters(configuration)
         .await
-        .map_err(|e| Box::<dyn Error>::from(format!("Failed to get clusters: {:?}", e)))?;
+        .context("Failed to get clusters")?;
+
     let rancher_cluster = rancher_clusters
         .items
         .into_iter()
         .find(|cluster| {
             cluster.metadata.as_ref().and_then(|m| m.name.as_deref()) == Some(cluster_id)
         })
-        .unwrap();
+        .ok_or_else(|| anyhow::anyhow!("Cluster with id '{}' not found", cluster_id))?;
 
-    let rancher_role_templates =
-        get_role_templates(configuration, None, None, None, None, None, None)
-            .await
-            .map_err(|e| {
-                Box::<dyn Error>::from(format!("Failed to get role templates: {:?}", e))
-            })?;
+    let rancher_role_templates = get_role_templates(configuration, None, None, None, None, None, None)
+        .await
+        .context("Failed to get role templates")?;
 
     let rrt: Vec<IoCattleManagementv3RoleTemplate> = rancher_role_templates.items.clone();
-
-    // let cluster_projects: HashMap<String, (IoCattleManagementv3Project, Vec<IoCattleManagementv3ProjectRoleTemplateBinding>)> = HashMap::new();
 
     let rancher_projects = project::get_projects(
         configuration,
@@ -274,7 +254,7 @@ pub async fn load_configuration_from_rancher(
         None,
     )
     .await
-    .map_err(|e| Box::<dyn Error>::from(format!("Failed to get projects: {:?}", e)))?;
+    .context("Failed to get projects")?;
 
     let mut rancher_cluster_config = RancherClusterConfig {
         cluster: rancher_cluster,
@@ -290,7 +270,8 @@ pub async fn load_configuration_from_rancher(
             .metadata
             .as_ref()
             .and_then(|m| m.name.as_deref())
-            .unwrap();
+            .ok_or_else(|| anyhow::anyhow!("Project missing metadata name"))?;
+
         let rancher_project_role_template_bindings =
             prtb::get_namespaced_project_role_template_bindings(
                 configuration,
@@ -303,12 +284,11 @@ pub async fn load_configuration_from_rancher(
                 None,
             )
             .await
-            .map_err(|e| {
-                Box::<dyn Error>::from(format!(
-                    "Failed to get project role template bindings: {:?}",
-                    e
-                ))
-            })?;
+            .context(format!(
+                "Failed to get project role template bindings for project '{}'",
+                project_id
+            ))?;
+
         let rprtbs: Vec<IoCattleManagementv3ProjectRoleTemplateBinding> =
             rancher_project_role_template_bindings.items.clone();
 
@@ -316,8 +296,10 @@ pub async fn load_configuration_from_rancher(
             .projects
             .insert(project_id.to_string(), (project, rprtbs));
     }
-    return Ok(rancher_cluster_config);
+
+    Ok(rancher_cluster_config)
 }
+
 
 // load the entire configuration from the base path
 ///
@@ -334,15 +316,15 @@ pub async fn load_configuration(
     endpoint_url: &str,
     cluster_id: &str,
     file_format: &FileFormat,
-) -> Result<Option<ClusterConfig>, Box<dyn Error>> {
+) -> Result<Option<ClusterConfig>> {
     let endpoint_path = path.join(endpoint_url.replace("https://", "").replace("/", "_"));
     if !endpoint_path.exists() {
-        return Err(format!("Configuration path does not exist: {:?}", endpoint_path).into());
+        bail!("Configuration path does not exist: {:?}", endpoint_path);
     }
 
     let cluster_folder_path = endpoint_path.join(cluster_id);
     if !cluster_folder_path.exists() {
-        return Err(format!("Cluster path does not exist: {:?}", cluster_folder_path).into());
+        bail!("Cluster path does not exist: {:?}", cluster_folder_path);
     }
 
     let cluster_file = cluster_folder_path.join(format!(
@@ -351,51 +333,59 @@ pub async fn load_configuration(
         file_extension_from_format(file_format)
     ));
     if !cluster_file.exists() {
-        return Err(format!("Cluster file does not exist: {:?}", cluster_file).into());
+        bail!("Cluster file does not exist: {:?}", cluster_file);
     }
 
     let cluster_file_content = read_to_string(&cluster_file)
         .await
-        .map_err(|e| format!("Failed to read file: {}", e))?;
-    let cluster: Cluster = deserialize_object(&cluster_file_content, file_format)?;
+        .with_context(|| format!("Failed to read cluster file: {:?}", cluster_file))?;
+    let cluster: Cluster = deserialize_object(&cluster_file_content, file_format)
+        .with_context(|| format!("Failed to deserialize cluster file: {:?}", cluster_file))?;
 
     let mut cluster_config = ClusterConfig {
         cluster: cluster.clone(),
         role_templates: Vec::new(),
-        projects: HashMap::new(),
+        projects: std::collections::HashMap::new(),
     };
 
     // Read role templates
     let role_template_path = endpoint_path.join("roles");
     if !role_template_path.exists() {
-        return Err(format!(
-            "Role template path does not exist: {:?}",
-            role_template_path
-        )
-        .into());
+        bail!("Role template path does not exist: {:?}", role_template_path);
     }
 
     let mut role_template_dir = read_dir(&role_template_path)
         .await
-        .map_err(|e| format!("Failed to read role template directory: {}", e))?;
+        .with_context(|| format!("Failed to read role template directory: {:?}", role_template_path))?;
 
     let mut role_templates = Vec::new();
-    while let Some(entry) = role_template_dir.next_entry().await.map_err(|e| format!("Failed to read role template entry: {}", e))? {
-        if entry.file_type().await?.is_file() {
+    while let Some(entry) = role_template_dir
+        .next_entry()
+        .await
+        .with_context(|| "Failed to read role template entry")?
+    {
+        if entry.file_type().await.with_context(|| "Failed to get role template file type")?.is_file() {
             let content = read_to_string(entry.path())
                 .await
-                .map_err(|e| format!("Failed to read role template file: {}", e))?;
-            let role_template: RoleTemplate = deserialize_object(&content, file_format)?;
+                .with_context(|| format!("Failed to read role template file: {:?}", entry.path()))?;
+            let role_template: RoleTemplate = deserialize_object(&content, file_format)
+                .with_context(|| format!("Failed to deserialize role template file: {:?}", entry.path()))?;
             role_templates.push(role_template);
         }
     }
     cluster_config.role_templates = role_templates;
 
     // Read projects and their PRTBs
-    let mut project_dir = read_dir(&cluster_folder_path).await.map_err(|e| format!("Failed to read cluster folder: {}", e))?;
+    let mut project_dir = read_dir(&cluster_folder_path)
+        .await
+        .with_context(|| format!("Failed to read cluster folder: {:?}", cluster_folder_path))?;
 
-    while let Some(entry) = project_dir.next_entry().await.map_err(|e| format!("Failed to read project entry: {}", e))? {
-        if entry.file_type().await?.is_dir() {
+    while let Some(entry) = project_dir
+        .next_entry()
+        .await
+        .with_context(|| "Failed to read project entry")?
+    {
+        if entry.file_type().await.with_context(|| "Failed to get project file type")?.is_dir() {
             let project_display_name = entry.file_name().to_string_lossy().to_string();
             let project_file = entry.path().join(format!(
                 "{}.{}",
@@ -404,34 +394,45 @@ pub async fn load_configuration(
             ));
 
             if !project_file.exists() {
-                return Err(format!("Project file does not exist: {:?}", project_file).into());
+                bail!("Project file does not exist: {:?}", project_file);
             }
 
             let content = read_to_string(&project_file)
                 .await
-                .map_err(|e| format!("Failed to read project file: {}", e))?;
-            let project: Project = deserialize_object(&content, file_format)?;
+                .with_context(|| format!("Failed to read project file: {:?}", project_file))?;
+            let project: Project = deserialize_object(&content, file_format)
+                .with_context(|| format!("Failed to deserialize project file: {:?}", project_file))?;
 
-            let project_id = project.id.clone().unwrap_or("default".to_string());
+            let project_id = project.id.clone().unwrap_or_else(|| "default".to_string());
 
-            cluster_config
-                .projects
-                .insert(project_id.clone(), (project.clone(), Vec::new()));
+            cluster_config.projects.insert(project_id.clone(), (project.clone(), Vec::new()));
 
-            let mut prtb_entries = read_dir(entry.path()).await.map_err(|e| format!("Failed to read PRTB directory: {}", e))?;
+            let mut prtb_entries = read_dir(entry.path())
+                .await
+                .with_context(|| format!("Failed to read PRTB directory: {:?}", entry.path()))?;
 
             let mut prtbs = Vec::new();
-            while let Some(prtb_entry) = prtb_entries.next_entry().await.map_err(|e| format!("Failed to read PRTB entry: {}", e))? {
-            if prtb_entry.file_type().await?.is_file() && prtb_entry.path() != project_file {
-                    let content = read_to_string(prtb_entry.path()).await .map_err(|e| format!("Failed to read PRTB file: {}", e))?;
-                    let prtb: ProjectRoleTemplateBinding = deserialize_object(&content, file_format)?;
-                prtbs.push(prtb);
+            while let Some(prtb_entry) = prtb_entries
+                .next_entry()
+                .await
+                .with_context(|| "Failed to read PRTB entry")?
+            {
+                if prtb_entry.file_type().await.with_context(|| "Failed to get PRTB file type")?.is_file()
+                    && prtb_entry.path() != project_file
+                {
+                    let content = read_to_string(prtb_entry.path())
+                        .await
+                        .with_context(|| format!("Failed to read PRTB file: {:?}", prtb_entry.path()))?;
+                    let prtb: ProjectRoleTemplateBinding = deserialize_object(&content, file_format)
+                        .with_context(|| format!("Failed to deserialize PRTB file: {:?}", prtb_entry.path()))?;
+                    prtbs.push(prtb);
                 }
             }
+
             if let Some((_, existing_prtbs)) = cluster_config.projects.get_mut(&project_id) {
                 existing_prtbs.extend(prtbs);
             } else {
-                return Err(format!("Project not found in cluster config: {}", project_id).into());
+                bail!("Project not found in cluster config: {}", project_id);
             }
         }
     }
@@ -488,7 +489,7 @@ pub async fn create_objects(
     configuration: &Configuration,
     new_files: Vec<(ObjectType, PathBuf)>,
     file_format: &FileFormat,
-) -> Vec<Result<CreatedObject, Box<dyn std::error::Error>>> {
+) -> Vec<Result<(PathBuf, CreatedObject), Box<dyn std::error::Error>>> {
     let mut results = Vec::new();
 
     for (object_type, file_path) in new_files {
@@ -511,7 +512,7 @@ pub async fn create_objects(
                         .clone();
                     let created = create_project(configuration, &cluster_name, rancher_p).await?;
                     println!("Created project: {}", display_name);
-                    Ok(CreatedObject::Project(created))
+                    Ok((file_path, CreatedObject::Project(created)))
                 }
                 .await
             }
@@ -523,7 +524,7 @@ pub async fn create_objects(
                     let rancher_rt = IoCattleManagementv3RoleTemplate::try_from(role_template)?;
                     let created = create_role_template(configuration, rancher_rt).await?;
                     println!("Created role template: {}", display_name.unwrap_or_default());
-                    Ok(CreatedObject::RoleTemplate(created))
+                    Ok((file_path, CreatedObject::RoleTemplate(created)))
                 }
                 .await
             }
@@ -540,7 +541,7 @@ pub async fn create_objects(
                         .ok_or("Missing namespace in metadata")?;
                     let created = create_project_role_template_binding(configuration, &project_id, rancher_prtb).await?;
                     println!("Created PRTB: {}", display_name);
-                    Ok(CreatedObject::ProjectRoleTemplateBinding(created))
+                    Ok((file_path, CreatedObject::ProjectRoleTemplateBinding(created)))
                 }
                 .await
             }
@@ -553,13 +554,34 @@ pub async fn create_objects(
 }
 
 
+/// Generic function to write any type of object to a file in the given path (overwrites file content)
+/// `file_path` is the path to the directory where the file should be written
+/// `file_format` is the format of the file to write (yaml, json, or toml)
+/// 
+/// Returns a Result
+pub async fn write_object_to_file<T>(
+    file_path: &PathBuf,
+    file_format: &FileFormat,
+    object: &T,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    T: serde::Serialize + Send + 'static,
+{
+    let serialized = serialize_object(object, file_format)?;
+    let mut file = OpenOptions::new() .write(true) .truncate(true) .create(true) .open(file_path).await?;
+    file.write_all(serialized.as_bytes()).await?;
+    Ok(())
+}
+
+
+
 
 
 /// serialize the object to the file format specified
 pub fn serialize_object<T: serde::Serialize>(
     object: &T,
     file_format: &FileFormat,
-) -> Result<String, Box<dyn Error>> {
+) -> Result<String, > {
     match file_format {
         FileFormat::Yaml => serde_yaml::to_string(object).map_err(|e| {
             Box::<dyn Error>::from(format!("Failed to serialize object to YAML: {}", e))
@@ -581,7 +603,7 @@ pub fn serialize_object<T: serde::Serialize>(
 pub fn deserialize_object<T: serde::de::DeserializeOwned>(
     object: &str,
     file_format: &FileFormat,
-) -> Result<T, Box<dyn Error>> {
+) -> Result<T, > {
     match file_format {
         FileFormat::Yaml => serde_yaml::from_str(object).map_err(|e| e.into()),
         FileFormat::Json => serde_json::from_str(object).map_err(|e| e.into()),

@@ -1,9 +1,9 @@
-use std::{collections::HashMap, fmt::Display};
+use std::{collections::HashMap, fmt::Display, path::PathBuf};
 
 use rancher_client::models::{IoCattleManagementv3Cluster, IoCattleManagementv3Project, IoCattleManagementv3ProjectRoleTemplateBinding, IoCattleManagementv3RoleTemplate};
 use serde::{Deserialize, Serialize};
 
-use crate::{cluster::Cluster, project::Project, prtb::ProjectRoleTemplateBinding, rt::RoleTemplate};
+use crate::{cluster::Cluster, file::FileFormat, project::Project, prtb::ProjectRoleTemplateBinding, rt::RoleTemplate};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ClusterConfig {
@@ -95,4 +95,13 @@ impl TryFrom<ClusterConfig> for RancherClusterConfig {
             projects: rancher_projects,
         })
     }
+}
+
+
+pub struct ShepherdConfig {
+    pub shepherd_config_path: PathBuf,
+    pub endpoint_url: String,
+    pub file_format: FileFormat,
+    pub token: String,
+    pub remote_repo_url: String,
 }

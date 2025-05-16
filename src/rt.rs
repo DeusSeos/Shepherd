@@ -18,6 +18,8 @@ use rancher_client::{
 };
 use serde_json::Value;
 
+use crate::models::ConversionError;
+
 pub const RT_EXCLUDE_PATHS: &[&str] = &[
     "metadata.creationTimestamp",
     "metadata.finalizers",
@@ -313,10 +315,10 @@ impl RoleTemplate {
 }
 
 impl TryFrom<IoCattleManagementv3RoleTemplate> for RoleTemplate {
-    type Error = &'static str;
+    type Error = ConversionError;
 
     fn try_from(value: IoCattleManagementv3RoleTemplate) -> Result<Self, Self::Error> {
-        let metadata: IoK8sApimachineryPkgApisMetaV1ObjectMeta = value.metadata.ok_or("missing metadata")?;
+        let metadata: IoK8sApimachineryPkgApisMetaV1ObjectMeta = value.metadata.ok_or(ConversionError::MissingField("metadata.name"))?;
 
         let administrative: Option<bool> = value.administrative;
         let annotations: Option<HashMap<String, String>> = metadata.annotations;
@@ -343,7 +345,7 @@ impl TryFrom<IoCattleManagementv3RoleTemplate> for RoleTemplate {
             display_name,
             external,
             hidden,
-            id: metadata.name.ok_or("missing metadata.name")?,
+            id: metadata.name.ok_or(ConversionError::MissingField("metadata.name"))?,
             labels,
             locked,
             project_creator_default,
@@ -354,7 +356,7 @@ impl TryFrom<IoCattleManagementv3RoleTemplate> for RoleTemplate {
 }
 
 impl TryFrom<RoleTemplate> for IoCattleManagementv3RoleTemplate {
-    type Error = &'static str;
+    type Error = ConversionError;
 
     fn try_from(value: RoleTemplate) -> Result<Self, Self::Error> {
         let metadata = IoK8sApimachineryPkgApisMetaV1ObjectMeta {

@@ -18,6 +18,8 @@ use rancher_client::{
 };
 use serde_json::Value;
 
+use crate::models::ConversionError;
+
 pub const PRTB_EXCLUDE_PATHS: &[&str] = &[
     "metadata.creationTimestamp",
     "metadata.finalizers",
@@ -411,15 +413,15 @@ impl ProjectRoleTemplateBinding {
 }
 
 impl TryFrom<IoCattleManagementv3ProjectRoleTemplateBinding> for ProjectRoleTemplateBinding {
-    type Error = &'static str;
+    type Error = ConversionError;
 
     fn try_from(
         value: IoCattleManagementv3ProjectRoleTemplateBinding,
     ) -> Result<Self, Self::Error> {
         let metadata: IoK8sApimachineryPkgApisMetaV1ObjectMeta =
-            value.metadata.ok_or("missing metadata")?;
+            value.metadata.ok_or(ConversionError::MissingField("metadata.name"))?;
 
-        let id = metadata.name.ok_or("missing name")?;
+        let id = metadata.name.ok_or(ConversionError::MissingField("metadata.name"))?;
 
         // Extract the fields from the IoCattleManagementv3ProjectRoleTemplateBinding
         // and create a new ProjectRoleTemplateBinding instance
@@ -462,7 +464,7 @@ impl TryFrom<IoCattleManagementv3ProjectRoleTemplateBinding> for ProjectRoleTemp
 }
 
 impl TryFrom<ProjectRoleTemplateBinding> for IoCattleManagementv3ProjectRoleTemplateBinding {
-    type Error = &'static str;
+    type Error = ConversionError;
 
     fn try_from(value: ProjectRoleTemplateBinding) -> Result<Self, Self::Error> {
         // Create a new IoCattleManagementv3ProjectRoleTemplateBinding instance

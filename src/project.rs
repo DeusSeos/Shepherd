@@ -30,6 +30,8 @@ use tokio::fs::{metadata, read_to_string};
 
 use crate::{deserialize_object, file::{file_extension_from_format, FileFormat}, ResourceVersionMatch};
 
+use crate::models::ConversionError;
+
 use crate::diff::diff_boxed_hashmap_string_string;
 
 pub const PROJECT_EXCLUDE_PATHS: &[&str] = &[
@@ -469,11 +471,11 @@ impl Project {
 }
 
 impl TryFrom<IoCattleManagementv3Project> for Project {
-    type Error = &'static str;
+    type Error = ConversionError;
 
     fn try_from(value: IoCattleManagementv3Project) -> Result<Self, Self::Error> {
-        let metadata = value.metadata.ok_or("missing metadata")?;
-        let spec = value.spec.ok_or("missing spec")?;
+        let metadata = value.metadata.ok_or(ConversionError::MissingField("metadata"))?;
+        let spec = value.spec.ok_or(ConversionError::MissingField("spec"))?;
 
         // let container_default_resource_limit = spec
         //     .container_default_resource_limit
@@ -518,7 +520,7 @@ impl TryFrom<IoCattleManagementv3Project> for Project {
 }
 
 impl TryFrom<Project> for IoCattleManagementv3Project {
-    type Error = &'static str;
+    type Error = ConversionError;
 
     fn try_from(value: Project) -> Result<Self, Self::Error> {
         // Construct metadata

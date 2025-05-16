@@ -7,6 +7,15 @@ pub enum FileFormat {
     Toml,
 }
 
+// to string for FileFormat
+impl std::fmt::Display for FileFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", file_extension_from_format(self))
+        }
+    }
+
+
+
 
 pub fn file_format_from_extension(extension: &str) -> FileFormat {
     match extension {
