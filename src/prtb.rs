@@ -6,7 +6,18 @@ use rancher_client::{
     apis::{
         configuration::Configuration,
         management_cattle_io_v3_api::{
-            create_management_cattle_io_v3_namespaced_project_role_template_binding, list_management_cattle_io_v3_namespaced_project_role_template_binding, list_management_cattle_io_v3_project_role_template_binding_for_all_namespaces, patch_management_cattle_io_v3_namespaced_project_role_template_binding, CreateManagementCattleIoV3NamespacedProjectRoleTemplateBindingError, ListManagementCattleIoV3NamespacedProjectRoleTemplateBindingError, ListManagementCattleIoV3ProjectRoleTemplateBindingForAllNamespacesError, PatchManagementCattleIoV3NamespacedProjectRoleTemplateBindingError
+            create_management_cattle_io_v3_namespaced_project_role_template_binding,
+            delete_management_cattle_io_v3_namespaced_project_role_template_binding,
+            list_management_cattle_io_v3_namespaced_project_role_template_binding,
+            list_management_cattle_io_v3_project_role_template_binding_for_all_namespaces,
+            patch_management_cattle_io_v3_namespaced_project_role_template_binding
+        },
+        management_cattle_io_v3_api::{
+            CreateManagementCattleIoV3NamespacedProjectRoleTemplateBindingError,
+            DeleteManagementCattleIoV3NamespacedProjectRoleTemplateBindingError,
+            ListManagementCattleIoV3NamespacedProjectRoleTemplateBindingError,
+            ListManagementCattleIoV3ProjectRoleTemplateBindingForAllNamespacesError,
+            PatchManagementCattleIoV3NamespacedProjectRoleTemplateBindingError
         },
         Error, ResponseContent,
     },
@@ -335,6 +346,65 @@ pub async fn create_project_role_template_binding(
     }
 }
 
+/// Delete a project role template binding by its ID  
+/// # Arguments  
+/// * `configuration` - The configuration to use for the request  
+/// * `project_id` - The ID of the project (namespace) containing the binding  
+/// * `prtb_id` - The ID of the project role template binding to delete  
+/// # Returns  
+/// * `IoCattleManagementv3ProjectRoleTemplateBinding` - The deleted binding  
+/// # Errors  
+/// * `Error<DeleteManagementCattleIoV3NamespacedProjectRoleTemplateBindingError>` - The error that occurred while trying to delete the binding  
+#[async_backtrace::framed]  
+pub async fn delete_project_role_template_binding(  
+    configuration: &Configuration,  
+    project_id: &str,  
+    prtb_id: &str,  
+) -> Result<IoCattleManagementv3ProjectRoleTemplateBinding, Error<DeleteManagementCattleIoV3NamespacedProjectRoleTemplateBindingError>> {  
+    let result = delete_management_cattle_io_v3_namespaced_project_role_template_binding(  
+        configuration,  
+        prtb_id,  
+        project_id,  
+        None, // grace_period_seconds  
+        None, // orphan_dependents  
+        None, // propagation_policy  
+        None, // dry_run  
+        None, // body  
+        None, // pretty
+    )  
+    .await;  
+  
+    match result {  
+        Err(e) => Err(e),  
+        Ok(response_content) => {  
+            // Match on the status code and deserialize accordingly  
+            match response_content.status {  
+                StatusCode::OK => {  
+                    // Try to deserialize the content into IoCattleManagementv3ProjectRoleTemplateBinding (Status200 case)  
+                    match serde_json::from_str(&response_content.content) {  
+                        Ok(data) => Ok(data),  
+                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),  
+                    }  
+                }  
+                _ => {  
+                    // If not status 200, treat as UnknownValue  
+                    match serde_json::from_str::<serde_json::Value>(&response_content.content) {  
+                        Ok(unknown_data) => Err(Error::ResponseError(ResponseContent {  
+                            status: response_content.status,  
+                            content: response_content.content,  
+                            entity: Some(  
+                                DeleteManagementCattleIoV3NamespacedProjectRoleTemplateBindingError::UnknownValue(  
+                                    unknown_data,  
+                                ),  
+                            ),  
+                        })),  
+                        Err(unknown_deserialize_err) => Err(Error::Serde(unknown_deserialize_err)),  
+                    }  
+                }  
+            }  
+        }  
+    }  
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ProjectRoleTemplateBinding {

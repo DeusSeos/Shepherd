@@ -9,6 +9,7 @@ use rancher_client::{
     apis::management_cattle_io_v3_api::{
         patch_management_cattle_io_v3_role_template, PatchManagementCattleIoV3RoleTemplateError,
         list_management_cattle_io_v3_role_template, ListManagementCattleIoV3RoleTemplateError,
+        delete_management_cattle_io_v3_role_template, DeleteManagementCattleIoV3RoleTemplateError
     },
     models::io_cattle_managementv3_role_template::Context,
     models::{
@@ -31,7 +32,62 @@ pub const RT_EXCLUDE_PATHS: &[&str] = &[
     "metadata.uid",
 ];
 
-
+/// Delete a role template by its ID  
+/// # Arguments  
+/// * `configuration` - The configuration to use for the request  
+/// * `role_template_id` - The ID of the role template to delete  
+/// # Returns  
+/// * `IoCattleManagementv3RoleTemplate` - The deleted role template  
+/// # Errors  
+/// * `Error<DeleteManagementCattleIoV3RoleTemplateError>` - The error that occurred while trying to delete the role template  
+#[async_backtrace::framed]  
+pub async fn delete_role_template(  
+    configuration: &Configuration,  
+    role_template_id: &str,  
+) -> Result<IoCattleManagementv3RoleTemplate, Error<DeleteManagementCattleIoV3RoleTemplateError>> {  
+    let result = delete_management_cattle_io_v3_role_template(  
+        configuration,  
+        role_template_id,  
+        None, // grace_period_seconds  
+        None, // orphan_dependents  
+        None, // propagation_policy  
+        None, // dry_run  
+        None, // body  
+        None, // pretty
+    )  
+    .await;  
+  
+    match result {  
+        Err(e) => Err(e),  
+        Ok(response_content) => {  
+            // Match on the status code and deserialize accordingly  
+            match response_content.status {  
+                StatusCode::OK => {  
+                    // Try to deserialize the content into IoCattleManagementv3RoleTemplate (Status200 case)  
+                    match serde_json::from_str(&response_content.content) {  
+                        Ok(data) => Ok(data),  
+                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),  
+                    }  
+                }  
+                _ => {  
+                    // If not status 200, treat as UnknownValue  
+                    match serde_json::from_str::<serde_json::Value>(&response_content.content) {  
+                        Ok(unknown_data) => Err(Error::ResponseError(ResponseContent {  
+                            status: response_content.status,  
+                            content: response_content.content,  
+                            entity: Some(  
+                                DeleteManagementCattleIoV3RoleTemplateError::UnknownValue(  
+                                    unknown_data,  
+                                ),  
+                            ),  
+                        })),  
+                        Err(unknown_deserialize_err) => Err(Error::Serde(unknown_deserialize_err)),  
+                    }  
+                }  
+            }  
+        }  
+    }  
+}
 
 /// Get all role templates from an endpoint using the provided configuration
 ///
