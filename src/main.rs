@@ -6,6 +6,7 @@ use std::error::Error;
 use std::path::PathBuf;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 
 
 use ::futures::future::join_all;
@@ -125,36 +126,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let new_files = get_new_uncommited_files(&path).await?;
     println!("New files: {:?}", new_files);
 
-    let created_objects = create_objects(&configuration, new_files, &file_format).await;
-    use tokio::task::JoinHandle;
+    let created_objects = create_objects(Arc::new(configuration), new_files, file_format).await;
 
-    let mut handles: Vec<JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>> = Vec::new();
-
+    // Separate errors and successes from object creation results
+    let mut errors: Vec<Box<dyn Error>> = Vec::new();
+    let mut successes: Vec<(PathBuf, CreatedObject)> = Vec::new();
     for result in created_objects {
-        if let Ok((file_path, created_object)) = result {
-            let handle = tokio::spawn(async move {
-                match created_object {
-                    CreatedObject::ProjectRoleTemplateBinding(created) => {
-                        println!("Created PRTB: {:#?}", created);
-                        let convert = ProjectRoleTemplateBinding::try_from(created)?;
-                        write_object_to_file(&file_path, &file_format, &convert).await?;
-                    }
-                    CreatedObject::Project(created) => {
-                        println!("Created Project: {:#?}", created);
-                        let convert = Project::try_from(created)?;
-                        write_object_to_file(&file_path, &file_format, &convert).await?;
-                    }
-                    CreatedObject::RoleTemplate(created) => {
-                        println!("Created Role Template: {:#?}", created);
-                        let convert = RoleTemplate::try_from(created)?;
-                        write_object_to_file(&file_path, &file_format, &convert).await?;
-                    }
-                }
-                Ok(())
-            });
-
-            handles.push(handle);
+        match result {
+            Ok((file_path, created_object)) => successes.push((file_path, created_object)),
+            Err(err) => errors.push(err),
         }
+    }
+
+    // Report errors, if any
+    if !errors.is_empty() {
+        eprintln!("Errors occurred while creating objects:");
+        for err in errors {
+            eprintln!("  - {}", err);
+        }
+    }
+
+    // Spawn tasks to write back the successfully created objects
+    use tokio::task::JoinHandle;
+    let mut handles: Vec<JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>> = Vec::new();
+    for (file_path, created_object) in successes {
+        let handle = tokio::spawn(async move {
+            match created_object {
+                CreatedObject::ProjectRoleTemplateBinding(created) => {
+                    println!("Created PRTB: {:#?}", created);
+                    let convert = ProjectRoleTemplateBinding::try_from(created)?;
+                    write_object_to_file(&file_path, &file_format, &convert).await?;
+                }
+                CreatedObject::Project(created) => {
+                    let convert = Project::try_from(created)?;
+                    write_object_to_file(&file_path, &file_format, &convert).await?;
+                }
+                CreatedObject::RoleTemplate(created) => {
+                    println!("Created Role Template: {:#?}", created);
+                    let convert = RoleTemplate::try_from(created)?;
+                    write_object_to_file(&file_path, &file_format, &convert).await?;
+                }
+            }
+            Ok(())
+        });
+        handles.push(handle);
     }
 
     for handle in handles {

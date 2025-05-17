@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::option::Option;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::fs::{create_dir_all, read_dir, read_to_string, write, OpenOptions};
 use anyhow::{Result, Context, bail};
 
@@ -476,7 +477,7 @@ fn remove_path_and_return(value: &mut Value, path: &[&str]) -> Option<Value> {
 // load an object from the file path specified
 pub async fn load_object<T: serde::de::DeserializeOwned>(
     file_path: &Path, file_format: &FileFormat
-) -> Result<T, Box<dyn std::error::Error>> {
+) -> Result<T, Box<dyn std::error::Error + Send + Sync>> {
     let contents = read_to_string(file_path).await?;
     match file_format {
         FileFormat::Yaml => Ok(serde_yaml::from_str(&contents)?),
@@ -487,22 +488,23 @@ pub async fn load_object<T: serde::de::DeserializeOwned>(
 }
 
 pub async fn create_objects(
-    configuration: &Configuration,
+    configuration: Arc<Configuration>,
     new_files: Vec<(ObjectType, PathBuf)>,
-    file_format: &FileFormat,
-) -> Vec<Result<(PathBuf, CreatedObject), Box<dyn std::error::Error>>> {
-    let mut results = Vec::new();
-
+    file_format: FileFormat,
+) -> Vec<Result<(PathBuf, CreatedObject), Box<dyn std::error::Error + Send + Sync>>> {
+    // Spawn tasks to create objects concurrently
+    let mut handles = Vec::with_capacity(new_files.len());
     for (object_type, file_path) in new_files {
-        let result = match object_type {
-            ObjectType::Cluster => {
-                // Not implemented yet
-                Err("Cluster creation not implemented".into())
-            }
-
-            ObjectType::Project => {
-                async {
-                    let project = load_object::<Project>(&file_path, file_format).await?;
+        let config = configuration.clone();
+        let format = file_format;
+        handles.push(tokio::spawn(async move {
+            let result: Result<(PathBuf, CreatedObject), Box<dyn std::error::Error + Send + Sync>> = match object_type {
+                ObjectType::Cluster => {
+                    // Not implemented yet
+                    Err("Cluster creation not implemented".into())
+                }
+                ObjectType::Project => {
+                    let project = load_object::<Project>(&file_path, &format).await?;
                     let display_name = project.display_name.clone();
                     let rancher_p = IoCattleManagementv3Project::try_from(project)?;
                     let cluster_name = rancher_p
@@ -511,28 +513,20 @@ pub async fn create_objects(
                         .ok_or("Missing spec")?
                         .cluster_name
                         .clone();
-                    let created = create_project(configuration, &cluster_name, rancher_p).await?;
+                    let created = create_project(&*config, &cluster_name, rancher_p).await?;
                     println!("Created project: {}", display_name);
                     Ok((file_path, CreatedObject::Project(created)))
                 }
-                .await
-            }
-
-            ObjectType::RoleTemplate => {
-                async {
-                    let role_template = load_object::<RoleTemplate>(&file_path, file_format).await?;
+                ObjectType::RoleTemplate => {
+                    let role_template = load_object::<RoleTemplate>(&file_path, &format).await?;
                     let display_name = role_template.display_name.clone();
                     let rancher_rt = IoCattleManagementv3RoleTemplate::try_from(role_template)?;
-                    let created = create_role_template(configuration, rancher_rt).await?;
+                    let created = create_role_template(&*config, rancher_rt).await?;
                     println!("Created role template: {}", display_name.unwrap_or_default());
                     Ok((file_path, CreatedObject::RoleTemplate(created)))
                 }
-                .await
-            }
-
-            ObjectType::ProjectRoleTemplateBinding => {
-                async {
-                    let prtb = load_object::<ProjectRoleTemplateBinding>(&file_path, file_format).await?;
+                ObjectType::ProjectRoleTemplateBinding => {
+                    let prtb = load_object::<ProjectRoleTemplateBinding>(&file_path, &format).await?;
                     let display_name = prtb.id.clone();
                     let rancher_prtb = IoCattleManagementv3ProjectRoleTemplateBinding::try_from(prtb)?;
                     let project_id = rancher_prtb
@@ -540,17 +534,24 @@ pub async fn create_objects(
                         .as_ref()
                         .and_then(|m| m.namespace.clone())
                         .ok_or("Missing namespace in metadata")?;
-                    let created = create_project_role_template_binding(configuration, &project_id, rancher_prtb).await?;
+                    let created =
+                        create_project_role_template_binding(&*config, &project_id, rancher_prtb).await?;
                     println!("Created PRTB: {}", display_name);
                     Ok((file_path, CreatedObject::ProjectRoleTemplateBinding(created)))
                 }
-                .await
-            }
-        };
-
-        results.push(result);
+            };
+            result
+        }));
     }
 
+    // Collect results from all tasks
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(res) => results.push(res),
+            Err(join_err) => results.push(Err(Box::new(join_err))),
+        }
+    }
     results
 }
 
