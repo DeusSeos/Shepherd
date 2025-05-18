@@ -42,3 +42,7 @@ cargo build --release
 ### Authors
 
 [Dominic Chua](https://github.com/DeusSeos)
+
+### Contributors
+
+[Matthew Shen](https://github.com/Sariel1563)
