@@ -12,11 +12,13 @@ pub mod update;
 
 use anyhow::{bail, Context, Result};
 use file::{file_extension_from_format, FileFormat};
+use futures::{stream, FutureExt, StreamExt};
 use models::{CreatedObject, ObjectType};
+use rancher_client::apis::Error;
+use reqwest::StatusCode;
 use serde_json::Value;
-use tokio::task::JoinHandle;
 use std::collections::HashMap;
-use std::ops::Deref;
+use std::future::Future;
 use std::option::Option;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -24,6 +26,8 @@ use std::time::Duration;
 use tokio::fs::{create_dir_all, read_dir, read_to_string, write, OpenOptions};
 use tokio::io::AsyncWriteExt;
 use tokio::time::sleep;
+use tracing::{info, warn, error};
+
 
 use cluster::Cluster;
 use config::{ClusterConfig, RancherClusterConfig};
@@ -617,22 +621,9 @@ pub async fn create_objects(
         match object_type {
             ObjectType::RoleTemplate => {
                 handles_role_templates.push(tokio::spawn(async move {
-                    let role_template =
-                        load_object::<RoleTemplate>(&file_path, &format).await?;
-                    let display_name = role_template.display_name.clone();
-                    let rancher_rt =
-                        IoCattleManagementv3RoleTemplate::try_from(role_template)?;
-                    let created = create_role_template(&*config, rancher_rt).await?;
-
-                    // if let Ok(created_rt) = poll_role_template_ready(config.clone(), created.clone()).await {
-                    //     println!(
-                    //         "Created and verified role template: {}",
-                    //         display_name.unwrap_or_default()
-                    //     );
-                    //     Ok((file_path, CreatedObject::RoleTemplate(created_rt)))
-                    // } else {
-                    //     Err("Failed to verify role template creation".into())
-                    // }
+                    let role_template = load_object::<RoleTemplate>(&file_path, &format).await?;
+                    let rancher_rt = IoCattleManagementv3RoleTemplate::try_from(role_template)?;
+                    let created = create_role_template(&config, rancher_rt).await?;
                     Ok((file_path, CreatedObject::RoleTemplate(created)))
                 }));
             }
@@ -646,7 +637,14 @@ pub async fn create_objects(
                         .ok_or("Missing spec")?
                         .cluster_name
                         .clone();
-                    let created = create_project(&*config, &cluster_name, rancher_p).await?;
+                    let created = create_project(&config, &cluster_name, rancher_p).await?;
+                    let display_name = created
+                        .metadata
+                        .as_ref()
+                        .and_then(|m| m.name.as_deref())
+                        .ok_or("Missing metadata.name in created project")?;
+
+                    println!("Created project: {}", display_name);
 
                     // if let Ok(created_project) = poll_project_ready(config.clone(), created.clone()).await {
                     //     println!("Created and verified project: {}", display_name);
@@ -659,29 +657,46 @@ pub async fn create_objects(
             }
             ObjectType::ProjectRoleTemplateBinding => {
                 handles_prtbs.push(tokio::spawn(async move {
-                    let prtb =
-                        load_object::<ProjectRoleTemplateBinding>(&file_path, &format)
-                            .await?;
-                    let display_name = prtb.id.clone();
-                    let rancher_prtb =
-                        IoCattleManagementv3ProjectRoleTemplateBinding::try_from(prtb)?;
-                    let project_id = rancher_prtb
-                        .metadata
-                        .as_ref()
-                        .and_then(|m| m.namespace.clone())
-                        .ok_or("Missing namespace in metadata")?;
-                    let created = create_project_role_template_binding(
-                        &*config,
-                        &project_id,
-                        rancher_prtb,
-                    )
-                    .await?;
-                    println!("Created PRTB: {}", display_name);
-                    Ok((
-                        file_path,
-                        CreatedObject::ProjectRoleTemplateBinding(created),
-                    ))
-                }));
+        let prtb = load_object::<ProjectRoleTemplateBinding>(&file_path, &format).await?;
+        let display_name = prtb.id.clone();
+        let rancher_prtb = IoCattleManagementv3ProjectRoleTemplateBinding::try_from(prtb)?;
+        let project_id = rancher_prtb
+            .metadata
+            .as_ref()
+            .and_then(|m| m.namespace.clone())
+            .ok_or("Missing namespace in metadata")?;
+
+        const MAX_RETRIES: usize = 5;
+        const RETRY_DELAY: Duration = Duration::from_millis(200);
+
+        let result = retry_async(
+            "create_project_role_template_binding",
+            MAX_RETRIES,
+            RETRY_DELAY,
+            || {
+                let config = config.clone();
+                let rancher_prtb = rancher_prtb.clone();
+                let project_id = project_id.clone();
+                async move {
+                    create_project_role_template_binding(&config, &project_id, rancher_prtb.clone()).await
+                }
+            },
+            |err| matches!(
+                err,
+                Error::ResponseError(resp)
+                if resp.status == StatusCode::NOT_FOUND || resp.status == StatusCode::INTERNAL_SERVER_ERROR
+            ),
+        )
+        .await;
+
+        match result {
+            Ok(created) => {
+                println!("Created PRTB: {}", display_name);
+                Ok((file_path, CreatedObject::ProjectRoleTemplateBinding(created)))
+            }
+            Err(e) => Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
+        }
+    }));
             }
             _ => unreachable!(),
         }
@@ -689,34 +704,67 @@ pub async fn create_objects(
 
     // for the ok results of the role templates poll them
     let rts = await_handles(handles_role_templates).await;
-    for rt in rts.iter() {
-        if let Ok(rt1) = rt {
-            // poll the role template
-            match &rt1.1 {
-                CreatedObject::RoleTemplate(rt) => {
-                    let _ = poll_role_template_ready(configuration.clone(), rt).await;
-                }
-                _ => unreachable!(),
+    let poll_tasks = rts.into_iter().filter_map(|res| {
+        match res {
+            Ok((path, CreatedObject::RoleTemplate(rt))) => {
+                let configuration = configuration.clone();
+                let fut = async move {
+                    let poll_result = poll_role_template_ready(configuration, &rt).await;
+                    match poll_result {
+                        Ok(_) => Ok((path, CreatedObject::RoleTemplate(rt))),
+                        Err(e) => Err(e),
+                    }
+                };
+                Some(fut.boxed())
+            }
+            other => {
+                // Wrap the already-evaluated result into a ready future
+                let fut = async move { other }.boxed();
+                Some(fut)
             }
         }
-    }
-    
-    results.extend(rts);
-    // poll for projects
-    let projects = await_handles(handles_projects).await;
-    for project in projects.iter() {
-        if let Ok(project1) = project {
-            // poll the project
-            match &project1.1 {
-                CreatedObject::Project(project) => {
-                    let _ = poll_project_ready(configuration.clone(), project).await;
-                }
-                _ => unreachable!(),
-            }
-        }
-    }
+    });
 
-    results.extend(projects);
+    // Run polling with a bounded number of concurrent futures
+    let polled_rts: Vec<_> = stream::iter(poll_tasks)
+        .buffer_unordered(10) // Adjust concurrency level here
+        .collect()
+        .await;
+
+    // Now append `polled_rts` to the final results
+    results.extend(polled_rts);
+
+    let projects = await_handles(handles_projects).await;
+
+    let poll_tasks = projects.into_iter().filter_map(|res| {
+        match res {
+            Ok((path, CreatedObject::Project(p))) => {
+                let configuration = configuration.clone();
+                let fut = async move {
+                    let poll_result = poll_project_ready(configuration, &p).await;
+                    match poll_result {
+                        Ok(_) => Ok((path, CreatedObject::Project(p))),
+                        Err(e) => Err(e),
+                    }
+                };
+                Some(fut.boxed())
+            }
+            other => {
+                // Wrap the already-evaluated result into a ready future
+                let fut = async move { other }.boxed();
+                Some(fut)
+            }
+        }
+    });
+
+    // Run polling with a bounded number of concurrent futures
+    let polled_projects: Vec<_> = stream::iter(poll_tasks)
+        .buffer_unordered(10) // Adjust concurrency level here
+        .collect()
+        .await;
+
+    // Now append `polled_projects` to the final results
+    results.extend(polled_projects);
 
     results.extend(await_handles(handles_prtbs).await);
     results
@@ -730,9 +778,13 @@ pub async fn create_objects(
 ///
 /// # Example
 ///
-/// 
+///
 async fn await_handles(
-    handles: Vec<tokio::task::JoinHandle<Result<(PathBuf, CreatedObject), Box<dyn std::error::Error + Send + Sync>>>>,
+    handles: Vec<
+        tokio::task::JoinHandle<
+            Result<(PathBuf, CreatedObject), Box<dyn std::error::Error + Send + Sync>>,
+        >,
+    >,
 ) -> Vec<Result<(PathBuf, CreatedObject), Box<dyn std::error::Error + Send + Sync>>> {
     let mut results = Vec::with_capacity(handles.len());
     for handle in handles {
@@ -761,7 +813,7 @@ async fn await_handles(
 ///
 /// # Example
 ///
-/// 
+///
 async fn poll_role_template_ready(
     config: Arc<Configuration>,
     created: &IoCattleManagementv3RoleTemplate,
@@ -778,18 +830,12 @@ async fn poll_role_template_ready(
         .and_then(|m| m.resource_version.as_deref());
 
     wait_for_object_ready(10, Duration::from_secs(1), || {
-        let config = config.clone();
         let rt_name = rt_name.to_string();
         let resource_version = resource_version.map(|s| s.to_string());
+        let config = config.clone();
 
         async move {
-            match find_role_template(
-                &*config,
-                &rt_name,
-                resource_version.as_deref(),
-            )
-            .await
-            {
+            match find_role_template(&*config, &rt_name, resource_version.as_deref()).await {
                 Ok(rt) => Ok(Some(rt)),
                 Err(e) => Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
             }
@@ -827,20 +873,83 @@ async fn poll_project_ready(
         let resource_version = resource_version.map(|s| s.to_string());
 
         async move {
-            match find_project(
-                &*config,
-                &c_name,
-                &p_name,
-                resource_version.as_deref(),
-            )
-            .await
-            {
-                Ok(p) => Ok(Some(p)),
+            match find_project(&*config, &c_name, &p_name, resource_version.as_deref()).await {
+                Ok(p) => {
+                    println!("Found project: {:?}", p);
+                    Ok(Some(p))
+                }
                 Err(e) => Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
             }
         }
     })
     .await
+}
+
+/// Retries an async operation up to `max_retries` times with a delay between attempts.
+///
+/// # Arguments
+/// * `label` - A string label for logging (e.g. "create_prtb")
+/// * `max_retries` - Maximum number of attempts
+/// * `delay` - Delay between retries
+/// * `op` - Async closure that returns a `Result`
+/// * `should_retry` - Function that inspects the error and decides whether to retry
+///
+/// # Returns
+/// * `Ok(T)` if the operation eventually succeeds
+/// * `Err(E)` if all attempts fail or retry condition is not met
+pub async fn retry_async<T, E, F, Fut, R>(
+    label: &str,
+    max_retries: usize,
+    delay: Duration,
+    mut op: F,
+    should_retry: R,
+) -> Result<T, E>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, E>>,
+    R: Fn(&E) -> bool,
+    E: std::fmt::Display,
+{
+    for attempt in 1..=max_retries {
+        match op().await {
+            Ok(result) => {
+                if attempt > 1 {
+                    info!(
+                        operation = %label,
+                        attempt,
+                        total_attempts = max_retries,
+                        "Retry succeeded"
+                    );
+                }
+                return Ok(result);
+            }
+            Err(e) => {
+                let retry = should_retry(&e);
+                if retry && attempt < max_retries {
+                    warn!(
+                        operation = %label,
+                        attempt,
+                        total_attempts = max_retries,
+                        error = %e,
+                        "Retrying after {:?}",
+                        delay
+                    );
+                    sleep(delay).await;
+                } else {
+                    error!(
+                        operation = %label,
+                        attempt,
+                        total_attempts = max_retries,
+                        error = %e,
+                        "Giving up"
+                    );
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    unreachable!("retry_async: loop should return on final attempt")
 }
 
 /// Generic function to write any type of object to a file in the given path (overwrites file content)
