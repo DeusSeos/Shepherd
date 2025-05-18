@@ -2,6 +2,7 @@
 name = "rancher-cac"
 version = "0.1.0"
 edition = "2021"
+authors = ["DeusSeos"]
 
 [dependencies]
 anyhow = "1.0.98"

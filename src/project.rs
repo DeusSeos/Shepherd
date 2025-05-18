@@ -130,6 +130,7 @@ pub async fn get_projects(
 /// * `configuration` - The configuration to use for the request
 /// * `cluster_id` - The ID of the cluster (namespace) to get the project for
 /// * `project_id` - The ID of the project to get
+/// * `resource_version` - The resource version to use for the request
 /// # Returns
 ///
 /// * `IoCattleManagementv3Project` - The project
@@ -142,13 +143,14 @@ pub async fn find_project(
     configuration: &Configuration,
     cluster_id: &str,
     project_id: &str,
+    resource_version: Option<&str>
 ) -> Result<IoCattleManagementv3Project, Error<ReadManagementCattleIoV3NamespacedProjectError>> {
     let result = read_management_cattle_io_v3_namespaced_project(
         configuration,
         project_id,
         cluster_id,
         None,
-        None,
+        resource_version,
     )
     .await;
 
@@ -159,6 +161,20 @@ pub async fn find_project(
             match response_content.status {
                 StatusCode::OK => {
                     // Try to deserialize the content into IoCattleManagementv3Project (Status200 case)
+                    match serde_json::from_str(&response_content.content) {
+                        Ok(data) => Ok(data),
+                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
+                    }
+                }
+                StatusCode::NOT_FOUND => {
+                    // Try to deserialize the content into IoCattleManagementv3Project (NotFound case)
+                    match serde_json::from_str(&response_content.content) {
+                        Ok(data) => Ok(data),
+                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
+                    }
+                }
+                StatusCode::UNAUTHORIZED => {
+                    // Try to deserialize the content into IoCattleManagementv3Project (Unauthorized case)
                     match serde_json::from_str(&response_content.content) {
                         Ok(data) => Ok(data),
                         Err(deserialize_err) => Err(Error::Serde(deserialize_err)),

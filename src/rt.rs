@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use rancher_client::{apis::{configuration::Configuration, management_cattle_io_v3_api::{create_management_cattle_io_v3_role_template, CreateManagementCattleIoV3RoleTemplateError}, Error, ResponseContent}, models::IoK8sApimachineryPkgApisMetaV1Patch};
+use rancher_client::{apis::{configuration::Configuration, management_cattle_io_v3_api::{create_management_cattle_io_v3_role_template, read_management_cattle_io_v3_role_template, CreateManagementCattleIoV3RoleTemplateError, ReadManagementCattleIoV3RoleTemplateError}, Error, ResponseContent}, models::IoK8sApimachineryPkgApisMetaV1Patch};
 use reqwest::StatusCode;
 
 use rancher_client::{
@@ -233,6 +233,66 @@ pub async fn update_role_template(configuration: &Configuration,
         }
     }
 }
+
+
+/// Find a role template by its ID
+/// # Arguments
+/// * `configuration` - The configuration for the request
+/// * `rt_id` - The ID of the role template to find
+/// # Returns
+/// * `Result<IoCattleManagementv3RoleTemplate, Error<ReadManagementCattleIoV3RoleTemplateError>>` - The role template that was found, or an error if any occurred
+/// 
+#[async_backtrace::framed]
+pub async fn find_role_template(
+    configuration: &Configuration,
+    rt_id: &str,
+    resource_version: Option<&str>
+) -> Result<IoCattleManagementv3RoleTemplate, Error<ReadManagementCattleIoV3RoleTemplateError>> {
+    let result = read_management_cattle_io_v3_role_template(
+        configuration,
+        rt_id,
+        None,
+        resource_version,
+    )
+    .await;
+    match result {
+        Err(e) => Err(e),
+        Ok(response_content) => {
+            // Match on the status code and deserialize accordingly
+            match response_content.status {
+                StatusCode::OK => {
+                    // Try to deserialize the content into IoCattleManagementv3RoleTemplate (Status200 case)
+                    match serde_json::from_str(&response_content.content) {
+                        Ok(entity) => Ok(entity),
+                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
+                    }
+                }
+                StatusCode::NOT_FOUND => {
+                    // Try to deserialize the content into IoCattleManagementv3RoleTemplate (NotFound case)
+                    match serde_json::from_str(&response_content.content) {
+                        Ok(entity) => Ok(entity),
+                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
+                    }
+                }
+                _ => {
+                    // If not status 200, treat as UnknownValue
+                    match serde_json::from_str::<serde_json::Value>(&response_content.content) {
+                        Ok(unknown_data) => Err(Error::ResponseError(ResponseContent {
+                            status: response_content.status,
+                            content: response_content.content,
+                            entity: Some(
+                                ReadManagementCattleIoV3RoleTemplateError::UnknownValue(unknown_data),
+                            ),
+                        })),
+                        Err(unknown_deserialize_err) => Err(Error::Serde(unknown_deserialize_err)),
+                    }
+                }
+            }
+        }
+    }
+}
+
+
 
 /// Create a role template from a given configuration
 /// # Arguments

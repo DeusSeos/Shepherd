@@ -126,6 +126,12 @@ pub async fn get_project_role_template_bindings(
 ///
 /// * `configuration` - The configuration to use for the request
 /// * `project_id` - The ID of the project (namespace) to get the role template bindings for
+/// * `field_selector` - If specified, selects only the specified fields of the bindings
+/// * `label_selector` - If specified, selects only the bindings with the specified labels
+/// * `limit` - If specified, limits the number of bindings returned
+/// * `resource_version` - If specified, only returns bindings with a resource version greater than the specified version
+/// * `resource_version_match` - If specified, only returns bindings with a resource version that matches the specified version
+/// * `continue_` - If specified, continues the listing from the last binding returned in the previous response
 ///
 /// # Returns
 ///
@@ -133,7 +139,7 @@ pub async fn get_project_role_template_bindings(
 ///
 /// # Errors
 ///
-/// * `Error<ListManagementCattleIoV3ProjectRoleTemplateBindingForAllNamespacesError>` - The error that occurred while trying to get the bindings
+/// * `Error<ListManagementCattleIoV3NamespacedProjectRoleTemplateBindingError>` - The error that occurred while trying to get the bindings
 #[async_backtrace::framed]
 pub async fn get_namespaced_project_role_template_bindings(
     configuration: &Configuration,
