@@ -30,6 +30,10 @@ use rancher_cac::{
     models::CreatedObject, models::ObjectType,
 };
 
+use serde::de;
+use tracing::{debug, error, info};
+use tracing_subscriber::fmt::format::FmtSpan;
+
 use rancher_client::models::{
     IoCattleManagementv3Project, IoCattleManagementv3ProjectRoleTemplateBinding,
     IoCattleManagementv3RoleTemplate,
@@ -98,6 +102,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    tracing_subscriber::fmt()
+        .with_span_events(FmtSpan::ENTER | FmtSpan::EXIT)
+        .init();
+
     // TODO: change this to use URL and token fetched from our custom config file
     let mut configuration = rancher_config_init(
         "https://rancher.rd.localhost",
@@ -124,7 +132,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cluster_id = "local";
 
     let new_files = get_new_uncommited_files(&path).await?;
-    println!("New files: {:?}", new_files);
+    info!("New files: {:?}", new_files);
 
     let created_objects = create_objects(Arc::new(configuration), new_files, file_format).await;
 
@@ -142,7 +150,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !errors.is_empty() {
         eprintln!("Errors occurred while creating objects:");
         for err in errors {
-            eprintln!("  - {}", err);
+            error!("  - {}", err);
         }
     }
 
@@ -153,16 +161,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let handle = tokio::spawn(async move {
             match created_object {
                 CreatedObject::ProjectRoleTemplateBinding(created) => {
-                    println!("Created PRTB: {:#?}", created);
+                    debug!("Writing PRTB: {:#?}", created);
                     let convert = ProjectRoleTemplateBinding::try_from(created)?;
                     write_object_to_file(&file_path, &file_format, &convert).await?;
                 }
                 CreatedObject::Project(created) => {
+                    debug!("Writing Project: {:#?}", created);
                     let convert = Project::try_from(created)?;
                     write_object_to_file(&file_path, &file_format, &convert).await?;
                 }
                 CreatedObject::RoleTemplate(created) => {
-                    println!("Created Role Template: {:#?}", created);
+                    debug!("Writing Role Template: {:#?}", created);
                     let convert = RoleTemplate::try_from(created)?;
                     write_object_to_file(&file_path, &file_format, &convert).await?;
                 }

@@ -26,8 +26,7 @@ use std::time::Duration;
 use tokio::fs::{create_dir_all, read_dir, read_to_string, write, OpenOptions};
 use tokio::io::AsyncWriteExt;
 use tokio::time::sleep;
-use tracing::{info, warn, error};
-
+use tracing::{debug, error, info, warn};
 
 use cluster::Cluster;
 use config::{ClusterConfig, RancherClusterConfig};
@@ -644,7 +643,7 @@ pub async fn create_objects(
                         .and_then(|m| m.name.as_deref())
                         .ok_or("Missing metadata.name in created project")?;
 
-                    println!("Created project: {}", display_name);
+                    info!("Created project: {}", display_name);
 
                     // if let Ok(created_project) = poll_project_ready(config.clone(), created.clone()).await {
                     //     println!("Created and verified project: {}", display_name);
@@ -657,46 +656,46 @@ pub async fn create_objects(
             }
             ObjectType::ProjectRoleTemplateBinding => {
                 handles_prtbs.push(tokio::spawn(async move {
-        let prtb = load_object::<ProjectRoleTemplateBinding>(&file_path, &format).await?;
-        let display_name = prtb.id.clone();
-        let rancher_prtb = IoCattleManagementv3ProjectRoleTemplateBinding::try_from(prtb)?;
-        let project_id = rancher_prtb
-            .metadata
-            .as_ref()
-            .and_then(|m| m.namespace.clone())
-            .ok_or("Missing namespace in metadata")?;
+                    let prtb = load_object::<ProjectRoleTemplateBinding>(&file_path, &format).await?;
+                    let display_name = prtb.id.clone();
+                    let rancher_prtb = IoCattleManagementv3ProjectRoleTemplateBinding::try_from(prtb)?;
+                    let project_id = rancher_prtb
+                        .metadata
+                        .as_ref()
+                        .and_then(|m| m.namespace.clone())
+                        .ok_or("Missing namespace in metadata")?;
 
-        const MAX_RETRIES: usize = 5;
-        const RETRY_DELAY: Duration = Duration::from_millis(200);
+                    const MAX_RETRIES: usize = 5;
+                    const RETRY_DELAY: Duration = Duration::from_millis(200);
 
-        let result = retry_async(
-            "create_project_role_template_binding",
-            MAX_RETRIES,
-            RETRY_DELAY,
-            || {
-                let config = config.clone();
-                let rancher_prtb = rancher_prtb.clone();
-                let project_id = project_id.clone();
-                async move {
-                    create_project_role_template_binding(&config, &project_id, rancher_prtb.clone()).await
-                }
-            },
-            |err| matches!(
-                err,
-                Error::ResponseError(resp)
-                if resp.status == StatusCode::NOT_FOUND || resp.status == StatusCode::INTERNAL_SERVER_ERROR
-            ),
-        )
-        .await;
+                    let result = retry_async(
+                        "create_project_role_template_binding",
+                        MAX_RETRIES,
+                        RETRY_DELAY,
+                        || {
+                            let config = config.clone();
+                            let rancher_prtb = rancher_prtb.clone();
+                            let project_id = project_id.clone();
+                            async move {
+                                create_project_role_template_binding(&config, &project_id, rancher_prtb.clone()).await
+                            }
+                        },
+                        |err| matches!(
+                            err,
+                            Error::ResponseError(resp)
+                            if resp.status == StatusCode::NOT_FOUND || resp.status == StatusCode::INTERNAL_SERVER_ERROR
+                        ),
+                    )
+                    .await;
 
-        match result {
-            Ok(created) => {
-                println!("Created PRTB: {}", display_name);
-                Ok((file_path, CreatedObject::ProjectRoleTemplateBinding(created)))
-            }
-            Err(e) => Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
-        }
-    }));
+                    match result {
+                        Ok(created) => {
+                            info!("Created PRTB: {}", display_name);
+                            Ok((file_path, CreatedObject::ProjectRoleTemplateBinding(created)))
+                        }
+                        Err(e) => Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
+                    }
+                }));
             }
             _ => unreachable!(),
         }
@@ -875,7 +874,7 @@ async fn poll_project_ready(
         async move {
             match find_project(&*config, &c_name, &p_name, resource_version.as_deref()).await {
                 Ok(p) => {
-                    println!("Found project: {:?}", p);
+                    info!("Found project: {:?}", p_name);
                     Ok(Some(p))
                 }
                 Err(e) => Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
@@ -921,6 +920,7 @@ where
                         "Retry succeeded"
                     );
                 }
+                debug!(operation = %label, "Operation succeeded");
                 return Ok(result);
             }
             Err(e) => {
