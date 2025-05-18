@@ -574,8 +574,8 @@ pub async fn create_objects(
     new_files: Vec<(ObjectType, PathBuf)>,
     file_format: FileFormat,
 ) -> Vec<Result<(PathBuf, CreatedObject), Box<dyn std::error::Error + Send + Sync>>> {
-    // Enforce creation order of RoleTemplates, then Projects, then ProjectRoleTemplateBindings
     let mut new_files = new_files;
+    let mut results = Vec::with_capacity(new_files.len());
     new_files.sort_by(|a, b| {
         let a_priority = match a.0 {
             ObjectType::RoleTemplate => 0,
@@ -617,214 +617,230 @@ pub async fn create_objects(
         match object_type {
             ObjectType::RoleTemplate => {
                 handles_role_templates.push(tokio::spawn(async move {
-                    let result: Result<
-                        (PathBuf, CreatedObject),
-                        Box<dyn std::error::Error + Send + Sync>,
-                    > = match object_type {
-                        ObjectType::RoleTemplate => {
-                            let role_template =
-                                load_object::<RoleTemplate>(&file_path, &format).await?;
-                            let display_name = role_template.display_name.clone();
-                            let rancher_rt =
-                                IoCattleManagementv3RoleTemplate::try_from(role_template)?;
-                            let created = create_role_template(&*config, rancher_rt).await?;
+                    let role_template =
+                        load_object::<RoleTemplate>(&file_path, &format).await?;
+                    let display_name = role_template.display_name.clone();
+                    let rancher_rt =
+                        IoCattleManagementv3RoleTemplate::try_from(role_template)?;
+                    let created = create_role_template(&*config, rancher_rt).await?;
 
-                            let rt_name = created
-                                .metadata
-                                .as_ref()
-                                .and_then(|m| m.name.as_deref())
-                                .ok_or("Missing metadata.name in created role template")?;
-
-                            let resource_version = created
-                                .metadata
-                                .as_ref()
-                                .and_then(|m| m.resource_version.as_deref());
-
-                            // poll for the role template to become available
-                            let created =
-                                wait_for_object_ready(10, Duration::from_secs(1), || {
-                                    let config = config.clone();
-                                    let rt_name = rt_name.to_string();
-                                    let resource_version = resource_version.map(|s| s.to_string());
-
-                                    async move {
-                                        match find_role_template(
-                                            &*config,
-                                            &rt_name,
-                                            resource_version.as_deref(),
-                                        )
-                                        .await
-                                        {
-                                            Ok(rt) => Ok(Some(rt)),
-                                            Err(e) => Err(Box::new(e)
-                                                as Box<dyn std::error::Error + Send + Sync>),
-                                        }
-                                    }
-                                })
-                                .await?;
-
-                            println!(
-                                "Created role template: {}",
-                                display_name.unwrap_or_default()
-                            );
-                            Ok((file_path, CreatedObject::RoleTemplate(created)))
-                        }
-                        _ => unreachable!(),
-                    };
-                    result
+                    // if let Ok(created_rt) = poll_role_template_ready(config.clone(), created.clone()).await {
+                    //     println!(
+                    //         "Created and verified role template: {}",
+                    //         display_name.unwrap_or_default()
+                    //     );
+                    //     Ok((file_path, CreatedObject::RoleTemplate(created_rt)))
+                    // } else {
+                    //     Err("Failed to verify role template creation".into())
+                    // }
+                    Ok((file_path, CreatedObject::RoleTemplate(created)))
                 }));
             }
             ObjectType::Project => {
                 handles_projects.push(tokio::spawn(async move {
-                    let result: Result<
-                        (PathBuf, CreatedObject),
-                        Box<dyn std::error::Error + Send + Sync>,
-                    > = match object_type {
-                        ObjectType::Project => {
-                            let project = load_object::<Project>(&file_path, &format).await?;
-                            let display_name = project.display_name.clone();
-                            let rancher_p = IoCattleManagementv3Project::try_from(project)?;
-                            let cluster_name = rancher_p
-                                .spec
-                                .as_ref()
-                                .ok_or("Missing spec")?
-                                .cluster_name
-                                .clone();
-                            let created = create_project(&*config, &cluster_name, rancher_p).await?;
-                            println!("Created project: {}", display_name);
-                            Ok((file_path, CreatedObject::Project(created)))
-                        }
-                        _ => unreachable!(),
-                    };
-                    result
+                    let project = load_object::<Project>(&file_path, &format).await?;
+                    let rancher_p = IoCattleManagementv3Project::try_from(project)?;
+                    let cluster_name = rancher_p
+                        .spec
+                        .as_ref()
+                        .ok_or("Missing spec")?
+                        .cluster_name
+                        .clone();
+                    let created = create_project(&*config, &cluster_name, rancher_p).await?;
+
+                    // if let Ok(created_project) = poll_project_ready(config.clone(), created.clone()).await {
+                    //     println!("Created and verified project: {}", display_name);
+                    //     Ok((file_path, CreatedObject::Project(created_project)))
+                    // } else {
+                    //     Err("Failed to verify project creation".into())
+                    // }
+                    Ok((file_path, CreatedObject::Project(created)))
                 }));
             }
             ObjectType::ProjectRoleTemplateBinding => {
                 handles_prtbs.push(tokio::spawn(async move {
-                    let result: Result<
-                        (PathBuf, CreatedObject),
-                        Box<dyn std::error::Error + Send + Sync>,
-                    > = match object_type {
-                        ObjectType::ProjectRoleTemplateBinding => {
-                            let prtb =
-                                load_object::<ProjectRoleTemplateBinding>(&file_path, &format)
-                                    .await?;
-                            let display_name = prtb.id.clone();
-                            let rancher_prtb =
-                                IoCattleManagementv3ProjectRoleTemplateBinding::try_from(prtb)?;
-                            let project_id = rancher_prtb
-                                .metadata
-                                .as_ref()
-                                .and_then(|m| m.namespace.clone())
-                                .ok_or("Missing namespace in metadata")?;
-                            let created = create_project_role_template_binding(
-                                &*config,
-                                &project_id,
-                                rancher_prtb,
-                            )
+                    let prtb =
+                        load_object::<ProjectRoleTemplateBinding>(&file_path, &format)
                             .await?;
-                            println!("Created PRTB: {}", display_name);
-                            Ok((
-                                file_path,
-                                CreatedObject::ProjectRoleTemplateBinding(created),
-                            ))
-                        }
-                        _ => unreachable!(),
-                    };
-                    result
+                    let display_name = prtb.id.clone();
+                    let rancher_prtb =
+                        IoCattleManagementv3ProjectRoleTemplateBinding::try_from(prtb)?;
+                    let project_id = rancher_prtb
+                        .metadata
+                        .as_ref()
+                        .and_then(|m| m.namespace.clone())
+                        .ok_or("Missing namespace in metadata")?;
+                    let created = create_project_role_template_binding(
+                        &*config,
+                        &project_id,
+                        rancher_prtb,
+                    )
+                    .await?;
+                    println!("Created PRTB: {}", display_name);
+                    Ok((
+                        file_path,
+                        CreatedObject::ProjectRoleTemplateBinding(created),
+                    ))
                 }));
             }
             _ => unreachable!(),
         }
     }
 
-    // Wait for all role templates to be created
-    let mut results = Vec::with_capacity(handles_role_templates.len());
-    for handle in handles_role_templates {
-        match handle.await {
-            Ok(res) => results.push(res),
-            Err(join_err) => results.push(Err(Box::new(join_err))),
+    // for the ok results of the role templates poll them
+    let rts = await_handles(handles_role_templates).await;
+    for rt in rts.iter() {
+        if let Ok(rt1) = rt {
+            // poll the role template
+            match &rt1.1 {
+                CreatedObject::RoleTemplate(rt) => {
+                    let _ = poll_role_template_ready(configuration.clone(), rt).await;
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+    
+    results.extend(rts);
+    // poll for projects
+    let projects = await_handles(handles_projects).await;
+    for project in projects.iter() {
+        if let Ok(project1) = project {
+            // poll the project
+            match &project1.1 {
+                CreatedObject::Project(project) => {
+                    let _ = poll_project_ready(configuration.clone(), project).await;
+                }
+                _ => unreachable!(),
+            }
         }
     }
 
-    // Wait for all projects to be created
-    for handle in handles_projects {
-        match handle.await {
-            Ok(res) => 
-                // Object was create successfully, poll for it to be ready
-                match res {
+    results.extend(projects);
 
-                    Ok((_, CreatedObject::Project(created))) => {
-                        let p_name = created
-                            .metadata
-                            .as_ref()
-                            .and_then(|m| m.name.as_deref())
-                            .ok_or("Missing metadata.name in created project").unwrap();
+    results.extend(await_handles(handles_prtbs).await);
+    results
+}
 
-                        let resource_version = created
-                            .metadata
-                            .as_ref()
-                            .and_then(|m| m.resource_version.as_deref());
-
-                        let c_name = created
-                            .spec
-                            .as_ref()
-                            .ok_or("Missing spec").unwrap()
-                            .cluster_name
-                            .clone();
-
-                        // poll for the project to become available
-                        let created =
-                            wait_for_object_ready(10, Duration::from_secs(1), || {
-                                let config = configuration.clone();
-                                let p_name = p_name.to_string();
-                                let c_name = c_name.to_string();
-                                let resource_version = resource_version.map(|s| s.to_string());
-
-                                async move {
-                                    match find_project(
-                                        &*config,
-                                        &c_name,
-                                        &p_name,
-                                        resource_version.as_deref(),
-                                    )
-                                    .await
-                                    {
-                                        Ok(p) => Ok(Some(p)),
-                                        Err(e) => Err(Box::new(e)
-                                            as Box<dyn std::error::Error + Send + Sync>),
-                                    }
-                                }
-                            })
-                            .await;
-
-                            // if the project was created successfully, log that it was created
-                            match created {
-                                Ok(_) => {
-                                    println!("Polled and verified project: {}", p_name);
-                                },
-                                Err(_) => {
-                                    println!("Error creating project: {}", p_name);
-                                }
-                            }
-
-                },
-                Ok(res) => results.push(Ok(res)),
-
-                Err(e) => results.push(Err(e))
-            },
-            Err(join_err) => results.push(Err(Box::new(join_err))),
-        }
-    }
-
-    // Wait for all project role template bindings to be created
-    for handle in handles_prtbs {
+/// Await all of the given handles, collecting their results into a vector.
+///
+/// The output vector will contain the same number of elements as the input vector,
+/// and the elements will be in the same order. If any of the handles
+/// error, the error will be propagated into the output vector.
+///
+/// # Example
+///
+/// 
+async fn await_handles(
+    handles: Vec<tokio::task::JoinHandle<Result<(PathBuf, CreatedObject), Box<dyn std::error::Error + Send + Sync>>>>,
+) -> Vec<Result<(PathBuf, CreatedObject), Box<dyn std::error::Error + Send + Sync>>> {
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
         match handle.await {
             Ok(res) => results.push(res),
             Err(join_err) => results.push(Err(Box::new(join_err))),
         }
     }
     results
+}
+
+/// Poll a role template until it is ready. This function is used to block until
+/// a role template is created successfully.
+///
+/// # Arguments
+///
+/// * `config`: The config object to use for connecting to the rancher server.
+///
+/// * `created`: The created role template that we want to poll. The `metadata` field of
+///   `created` must contain a valid `name` field.
+///
+/// # Errors
+///
+/// If the polling fails for any reason, or if the object is not created successfully,
+/// an error will be returned.
+///
+/// # Example
+///
+/// 
+async fn poll_role_template_ready(
+    config: Arc<Configuration>,
+    created: &IoCattleManagementv3RoleTemplate,
+) -> Result<IoCattleManagementv3RoleTemplate, Box<dyn std::error::Error + Send + Sync>> {
+    let rt_name = created
+        .metadata
+        .as_ref()
+        .and_then(|m| m.name.as_deref())
+        .ok_or("Missing metadata.name in created role template")?;
+
+    let resource_version = created
+        .metadata
+        .as_ref()
+        .and_then(|m| m.resource_version.as_deref());
+
+    wait_for_object_ready(10, Duration::from_secs(1), || {
+        let config = config.clone();
+        let rt_name = rt_name.to_string();
+        let resource_version = resource_version.map(|s| s.to_string());
+
+        async move {
+            match find_role_template(
+                &*config,
+                &rt_name,
+                resource_version.as_deref(),
+            )
+            .await
+            {
+                Ok(rt) => Ok(Some(rt)),
+                Err(e) => Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
+            }
+        }
+    })
+    .await
+}
+
+async fn poll_project_ready(
+    config: Arc<Configuration>,
+    created: &IoCattleManagementv3Project,
+) -> Result<IoCattleManagementv3Project, Box<dyn std::error::Error + Send + Sync>> {
+    let p_name = created
+        .metadata
+        .as_ref()
+        .and_then(|m| m.name.as_deref())
+        .ok_or("Missing metadata.name in created project")?;
+
+    let resource_version = created
+        .metadata
+        .as_ref()
+        .and_then(|m| m.resource_version.as_deref());
+
+    let c_name = created
+        .spec
+        .as_ref()
+        .ok_or("Missing spec")?
+        .cluster_name
+        .clone();
+
+    wait_for_object_ready(10, Duration::from_secs(1), || {
+        let config = config.clone();
+        let p_name = p_name.to_string();
+        let c_name = c_name.to_string();
+        let resource_version = resource_version.map(|s| s.to_string());
+
+        async move {
+            match find_project(
+                &*config,
+                &c_name,
+                &p_name,
+                resource_version.as_deref(),
+            )
+            .await
+            {
+                Ok(p) => Ok(Some(p)),
+                Err(e) => Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
+            }
+        }
+    })
+    .await
 }
 
 /// Generic function to write any type of object to a file in the given path (overwrites file content)
