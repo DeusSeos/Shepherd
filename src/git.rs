@@ -61,6 +61,54 @@ pub fn init_and_commit_git_repo(folder_path: &Path, remote_url: &str) -> Result<
     Ok(())
 }
 
+/// Collect the modified files from a given folder path
+///
+/// # Arguments
+/// * `folder_path` - The path of the folder to collect files from.
+///
+/// # Returns
+/// A vector containing the absolute paths of all modified files
+/// in the specified folder and its subfolders.
+#[async_backtrace::framed]
+pub async fn get_modified_files(
+    folder_path: &Path,
+) -> Result<Vec<PathBuf>, Box<dyn Error>> {
+    let folder_path = folder_path
+        .canonicalize()
+        .map_err(|e| format!("Failed to canonicalize folder path {}: {}", folder_path.display(), e))?;
+    let repo = Repository::discover(&folder_path)
+        .map_err(|e| format!("Failed to open Git repo: {}", e))?;
+    let workdir = repo
+        .workdir()
+        .ok_or("Repository has no working directory")?;
+
+    let rel_folder = folder_path
+        .strip_prefix(workdir)
+        .map_err(|_| format!("Folder path is not under workdir: {}", folder_path.display()))?;
+
+    let statuses = repo
+        .statuses(None)
+        .map_err(|e| format!("Failed to get statuses: {}", e))?;
+    let mask = Status::WT_MODIFIED | Status::INDEX_MODIFIED;
+    let mut modified_files = Vec::new();
+    for status in statuses.iter() {
+        if !status.status().intersects(mask) {
+            continue;
+        }
+        let path = match status.path() {
+            Some(p) => std::path::Path::new(p),
+            None => {
+                tracing::warn!("Encountered null path in git status");
+                continue;
+            }
+        };
+        if path.starts_with(rel_folder) {
+            modified_files.push(workdir.join(path));
+        }
+    }
+    Ok(modified_files)
+}
+
 
 /// Initialize a local git repository in the folder with main branch
 /// # Arguments

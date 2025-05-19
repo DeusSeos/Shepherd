@@ -13,9 +13,10 @@ use ::futures::future::join_all;
 use rancher_cac::cluster::Cluster;
 use rancher_cac::config::RancherClusterConfig;
 use rancher_cac::diff::{compute_cluster_diff, create_json_patch};
-use rancher_cac::file::FileFormat;
+use rancher_cac::file::{FileFormat};
+use rancher_cac::file::write_object_to_file;
 use rancher_cac::git::{
-    commit_changes, get_new_uncommited_files, init_git_repo_with_main_branch, push_repo_to_remote,
+    commit_changes, get_modified_files, get_new_uncommited_files, init_git_repo_with_main_branch, push_repo_to_remote
 };
 use rancher_cac::project::{
     create_project, find_project, get_projects, load_project, show_project_diff, show_text_diff,
@@ -23,13 +24,14 @@ use rancher_cac::project::{
 };
 use rancher_cac::prtb::{create_project_role_template_binding, ProjectRoleTemplateBinding};
 use rancher_cac::rt::{create_role_template, RoleTemplate};
-use rancher_cac::update::compare_and_update_configurations;
+use rancher_cac::modify::{compare_and_update_configurations, create_objects};
 use rancher_cac::{
-    create_objects, download_current_configuration, load_configuration,
-    load_configuration_from_rancher, load_object, rancher_config_init, write_object_to_file,
+     download_current_configuration, load_configuration,
+    load_configuration_from_rancher, load_object, rancher_config_init,
     models::CreatedObject, models::ObjectType,
 };
 
+use rancher_client::apis::configuration;
 use serde::de;
 use tracing::{debug, error, info};
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -121,7 +123,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     configuration.client = ClientBuilder::new(client).build();
 
     // TODO: change this to use path fetched from our custom config file
-    let path = std::path::PathBuf::from("/Users/dc/Documents/Rust/rancher_config");
+    let config_folder_path = std::path::PathBuf::from("/Users/dc/Documents/Rust/rancher_config");
 
     // TODO: change this to use remote url fetched from our custom config file
     let remote_url = "git@github.com:DeusSeos/rancher_config.git";
@@ -131,10 +133,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let cluster_id = "local";
 
-    let new_files = get_new_uncommited_files(&path).await?;
+    let new_files = get_new_uncommited_files(&config_folder_path).await?;
+
+    let modified_files = get_modified_files(&config_folder_path).await?;
+
     info!("New files: {:?}", new_files);
 
-    let created_objects = create_objects(Arc::new(configuration), new_files, file_format).await;
+    info!("Modified files: {:?}", modified_files);
+
+    let configuration = Arc::new(configuration);
+
+    let update_objects = compare_and_update_configurations(configuration.clone(), &config_folder_path, cluster_id, &file_format).await;
+
+    let created_objects = create_objects(configuration.clone(), new_files, file_format).await;
 
     // Separate errors and successes from object creation results
     let mut errors: Vec<Box<dyn Error>> = Vec::new();
@@ -163,17 +174,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 CreatedObject::ProjectRoleTemplateBinding(created) => {
                     debug!("Writing PRTB: {:#?}", created);
                     let convert = ProjectRoleTemplateBinding::try_from(created)?;
-                    write_object_to_file(&file_path, &file_format, &convert).await?;
+                    write_object_to_file(&file_path, &file_format, &convert).await.unwrap_or_else(
+                        |err| {
+                            error!("Error writing PRTB: {:#?}", err);
+                    });
                 }
                 CreatedObject::Project(created) => {
                     debug!("Writing Project: {:#?}", created);
                     let convert = Project::try_from(created)?;
-                    write_object_to_file(&file_path, &file_format, &convert).await?;
+                    write_object_to_file(&file_path, &file_format, &convert).await.unwrap_or_else(
+                        |err| {
+                            error!("Error writing Project: {:#?}", err);
+                        },
+                    );
                 }
                 CreatedObject::RoleTemplate(created) => {
                     debug!("Writing Role Template: {:#?}", created);
                     let convert = RoleTemplate::try_from(created)?;
-                    write_object_to_file(&file_path, &file_format, &convert).await?;
+                    write_object_to_file(&file_path, &file_format, &convert).await.unwrap_or_else(
+                        |err| {
+                            error!("Error writing Role Template: {:#?}", err);
+                        },
+                    );
                 }
             }
             Ok(())

@@ -1,4 +1,9 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result};
+use tokio::{fs::OpenOptions, io::AsyncWriteExt};
+
+use crate::serialize_object;
 
 
 #[derive(Clone, Copy)]
@@ -15,6 +20,31 @@ impl std::fmt::Display for FileFormat {
         }
     }
 
+
+/// Generic function to write any type of object to a file in the given path (overwrites file content)
+/// `file_path` is the path to the directory where the file should be written
+/// `file_format` is the format of the file to write (yaml, json, or toml)
+///
+/// Returns a Result
+pub async fn write_object_to_file<T>(
+    file_path: &PathBuf,
+    file_format: &FileFormat,
+    object: &T,
+) -> Result<()>
+where
+    T: serde::Serialize + Send + 'static,
+{
+    let serialized = serialize_object(object, file_format)?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .create(true)
+        .open(file_path)
+        .await?;
+    file.write_all(serialized.as_bytes())
+        .await
+        .context("Failed to write object to file")
+}
 
 
 
