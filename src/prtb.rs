@@ -495,9 +495,9 @@ impl TryFrom<IoCattleManagementv3ProjectRoleTemplateBinding> for ProjectRoleTemp
         value: IoCattleManagementv3ProjectRoleTemplateBinding,
     ) -> Result<Self, Self::Error> {
         let metadata: IoK8sApimachineryPkgApisMetaV1ObjectMeta =
-            value.metadata.ok_or(ConversionError::MissingField("metadata.name"))?;
+            value.metadata.ok_or(ConversionError::MissingField("metadata.name".into()))?;
 
-        let id = metadata.name.ok_or(ConversionError::MissingField("metadata.name"))?;
+        let id = metadata.name.ok_or(ConversionError::MissingField("metadata.name".into()))?;
 
         // Extract the fields from the IoCattleManagementv3ProjectRoleTemplateBinding
         // and create a new ProjectRoleTemplateBinding instance

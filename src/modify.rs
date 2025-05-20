@@ -1,20 +1,20 @@
-use crate::{poll_project_ready, poll_role_template_ready, retry_async, RoleTemplate};
+use crate::{cluster, poll_project_ready, poll_role_template_ready, retry_async, RoleTemplate};
 use crate::diff::compute_cluster_diff;
-use crate::models::CreatedObject;
-use crate::project::{create_project, update_project};
-use crate::prtb::update_project_role_template_binding;
-use crate::rt::update_role_template;
+use crate::models::{ConversionError, CreatedObject, MinimalObject};
+use crate::project::{create_project, delete_project, update_project};
+use crate::prtb::{delete_project_role_template_binding, update_project_role_template_binding};
+use crate::rt::{delete_role_template, update_role_template};
 use crate::{await_handles, load_configuration, load_configuration_from_rancher, load_object, ObjectType};
 use crate::config::RancherClusterConfig;
 use crate::file::FileFormat;
 
 use rancher_client::apis::configuration::Configuration;
 use rancher_client::apis::Error;
-use rancher_client::models::{IoCattleManagementv3Project, IoCattleManagementv3ProjectRoleTemplateBinding, IoCattleManagementv3RoleTemplate};
+use rancher_client::models::{IoCattleManagementv3Project, IoCattleManagementv3ProjectRoleTemplateBinding, IoCattleManagementv3RoleTemplate, IoK8sApimachineryPkgApisMetaV1ObjectMeta};
 use reqwest::StatusCode;
 
 use futures::{stream, FutureExt, StreamExt};
-use tracing::info;
+use tracing::{debug, info};
 
 
 use crate::project::Project;
@@ -27,6 +27,16 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+    /// Compares the stored configuration with the live Rancher configuration and updates the differences.
+    ///
+    /// # Arguments
+    /// * `configuration`: The configuration object to use for connecting to Rancher
+    /// * `config_folder_path`: The path to the folder containing the stored configuration
+    /// * `cluster_id`: The ID of the cluster to load the stored configuration from
+    /// * `file_format`: The file format to load the stored configuration from
+    ///
+    /// # Returns
+    /// `Vec<Result<CreatedObject, Box<dyn std::error::Error + Send + Sync>>>`: A vector of results containing the created objects
 pub async fn compare_and_update_configurations(
     configuration: Arc<Configuration>,
     config_folder_path: &Path,
@@ -42,7 +52,7 @@ pub async fn compare_and_update_configurations(
 
     // Compute the differences
     let diffs = compute_cluster_diff(&serde_json::to_value(&live_config).unwrap(), &serde_json::to_value(&stored_config).unwrap());
-    info!("Found {:#?} differences", diffs);
+    info!("Generated diffs for cluster `{}`: {:#?} ", cluster_id, diffs);
 
     let mut results: Vec<Result<CreatedObject, Box<dyn std::error::Error + Send + Sync>>> = Vec::new();
 
@@ -72,17 +82,20 @@ async fn handle_diff(
     match object_type {
         ObjectType::Project => {
             let ns = namespace.as_deref().unwrap_or("<no-namespace>");
-            println!("  → project `{}` in namespace `{}`", object_id, ns);
+            debug!("Updating project `{}` in cluster `{} with diff: {:#?}`", object_id, ns, diff_value);
             let object = update_project(&configuration, &ns, &object_id, diff_value).await;
             match object {
-                Ok(object) => Ok(CreatedObject::Project(object)),
+                Ok(object) => {
+                    info!("Updated project `{}` ({}) in cluster `{}`", object_id, object.spec.as_ref().unwrap().display_name, ns);
+                    Ok(CreatedObject::Project(object))
+                },
                 Err(e) => Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
             }
-
         }
 
         ObjectType::RoleTemplate => {
-            println!("  → role-template `{}`", object_id);
+            info!("Update role-template `{}`", object_id);
+            debug!("Update role-template `{}` with diff: {:#?} ", object_id, diff_value);
             let object = update_role_template(&configuration, &object_id, diff_value).await;
             match object {
                 Ok(object) => Ok(CreatedObject::RoleTemplate(object)),
@@ -92,7 +105,8 @@ async fn handle_diff(
 
         ObjectType::ProjectRoleTemplateBinding => {
             let ns = namespace.as_deref().unwrap_or("<no-namespace>");
-            println!("  → prtb `{}` in namespace `{}`", object_id, ns);
+            info!("Updated prtb `{}` in namespace `{}`", object_id, ns);
+            debug!("Updated prtb `{}` in namespace `{}` with diff: {:#?} ", object_id, ns, diff_value);
             let object = update_project_role_template_binding(&configuration, &ns, &object_id, diff_value).await;
             match object {
                 Ok(object) => Ok(CreatedObject::ProjectRoleTemplateBinding(object)),
@@ -103,6 +117,90 @@ async fn handle_diff(
         _ => panic!("Unsupported object type: {:?}", object_type),
     }
 }
+
+
+
+/// Deletes objects from the cluster
+/// # Arguments
+/// * `configuration` - The configuration object
+/// * `deleted_files` - A vector of tuples containing the object type and the minimal object
+/// # Returns
+/// * `Vec<Result<CreatedObject, Box<dyn std::error::Error + Send + Sync>>>`
+pub async fn delete_objects(
+    configuration: Arc<Configuration>,
+    deleted_files: Vec<(ObjectType, MinimalObject)>,
+) -> Vec<Result<CreatedObject, Box<dyn std::error::Error + Send + Sync>>> {
+    let mut results = Vec::with_capacity(deleted_files.len());
+    for (object_type, minimal_object) in deleted_files {
+        match delete_object(&configuration, &object_type, &minimal_object).await {
+            Ok(object) => results.push(Ok(object)),
+            Err(e) => results.push(Err(e)),
+        }
+    }
+    results
+}
+
+/// Deletes an object from the cluster
+/// # Arguments
+/// * `configuration` - The configuration object
+/// * `object_type` - The type of object to delete
+/// * `minimal_object` - The minimal object
+/// # Returns
+/// * `Result<CreatedObject, Box<dyn std::error::Error + Send + Sync>>`
+/// 
+async fn delete_object(
+    configuration: &Arc<Configuration>,
+    object_type: &ObjectType,
+    minimal_object: &MinimalObject,
+) -> Result<CreatedObject, Box<dyn std::error::Error + Send + Sync>> {
+    match object_type {
+        ObjectType::Project => {
+            let cluster_id = minimal_object.namespace.as_deref().unwrap_or("<no-namespace>");
+            if minimal_object.object_id.is_none() {
+                return Err(Box::new(ConversionError::InvalidValue {
+                    field: "object_id".into(),
+                    reason: "object_id is required".into(),
+                }) as Box<dyn std::error::Error + Send + Sync>);
+            }
+            info!("Deleting project `{}` from cluster `{}`", minimal_object.object_id.as_ref().unwrap(), cluster_id);
+            let object = delete_project(&configuration, cluster_id, &minimal_object.object_id.as_ref().unwrap().as_ref()).await;
+            match object {
+                Ok(object) => { 
+                    info!("Deleted project `{}` ({}) from cluster `{}`", minimal_object.object_id.as_ref().unwrap(), object.spec.as_ref().unwrap().display_name, cluster_id); 
+                    Ok(CreatedObject::Project(object))
+            }
+                ,
+                Err(e) => Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+            }
+        }
+
+        ObjectType::RoleTemplate => {
+            if minimal_object.object_id.is_none() {
+                return Err(Box::new(ConversionError::InvalidValue {
+                    field: "object_id".into(),
+                    reason: "object_id is required".into(),
+                }) as Box<dyn std::error::Error + Send + Sync>);
+            }
+            info!("Deleting role-template `{}`", minimal_object.object_id.as_ref().unwrap());
+            let object = delete_role_template(&configuration, &minimal_object.object_id.as_ref().unwrap().as_ref()).await;
+            match object {
+                Ok(object) => Ok(CreatedObject::RoleTemplate(object)),
+                Err(e) => Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+            }
+        }
+        ObjectType::ProjectRoleTemplateBinding => {
+            let cluster_id = minimal_object.namespace.as_deref().unwrap_or("<no-namespace>");
+            info!("Deleting prtb `{}` from cluster `{}`", minimal_object.object_id.as_ref().unwrap(), cluster_id);
+            let object = delete_project_role_template_binding(&configuration, cluster_id, &minimal_object.object_id.as_ref().unwrap().as_ref()).await;
+            match object {
+                Ok(object) => Ok(CreatedObject::ProjectRoleTemplateBinding(object)),
+                Err(e) => Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+            }
+        }
+        _ => panic!("Unsupported object type: {:?}", object_type),
+    }
+}
+
 
 
 
@@ -163,13 +261,20 @@ pub async fn create_objects(
             ObjectType::Project => {
                 handles_projects.push(tokio::spawn(async move {
                     let project = load_object::<Project>(&file_path, &format).await?;
-                    let rancher_p = IoCattleManagementv3Project::try_from(project)?;
+                    let mut rancher_p = IoCattleManagementv3Project::try_from(project)?;
                     let cluster_name = rancher_p
                         .spec
                         .as_ref()
                         .ok_or("Missing spec")?
                         .cluster_name
                         .clone();
+                    // check if the metadata.name exists and if not add metadata.generateName: p- to the project's metadata
+                    if rancher_p.metadata.is_none() || rancher_p.metadata.as_ref().unwrap().name.is_none() {
+                        let mut metadata = rancher_p.metadata.unwrap_or(IoK8sApimachineryPkgApisMetaV1ObjectMeta::default());
+                        metadata.generate_name = Some("p-".to_string());
+                        rancher_p.metadata = Some(metadata);
+                        
+                    }
                     let created = create_project(&config, &cluster_name, rancher_p).await?;
                     let display_name = created
                         .metadata
@@ -179,12 +284,6 @@ pub async fn create_objects(
 
                     info!("Created project: {}", display_name);
 
-                    // if let Ok(created_project) = poll_project_ready(config.clone(), created.clone()).await {
-                    //     println!("Created and verified project: {}", display_name);
-                    //     Ok((file_path, CreatedObject::Project(created_project)))
-                    // } else {
-                    //     Err("Failed to verify project creation".into())
-                    // }
                     Ok((file_path, CreatedObject::Project(created)))
                 }));
             }
@@ -192,12 +291,18 @@ pub async fn create_objects(
                 handles_prtbs.push(tokio::spawn(async move {
                     let prtb = load_object::<ProjectRoleTemplateBinding>(&file_path, &format).await?;
                     let display_name = prtb.id.clone();
-                    let rancher_prtb = IoCattleManagementv3ProjectRoleTemplateBinding::try_from(prtb)?;
+                    let mut rancher_prtb = IoCattleManagementv3ProjectRoleTemplateBinding::try_from(prtb)?;
                     let project_id = rancher_prtb
                         .metadata
                         .as_ref()
                         .and_then(|m| m.namespace.clone())
                         .ok_or("Missing namespace in metadata")?;
+
+                    if rancher_prtb.metadata.is_none() || rancher_prtb.metadata.as_ref().unwrap().name.is_none() {
+                        let mut metadata = rancher_prtb.metadata.unwrap_or(IoK8sApimachineryPkgApisMetaV1ObjectMeta::default());
+                        metadata.generate_name = Some("prtb-".to_string());
+                        rancher_prtb.metadata = Some(metadata);
+                    }
 
                     const MAX_RETRIES: usize = 5;
                     const RETRY_DELAY: Duration = Duration::from_millis(200);

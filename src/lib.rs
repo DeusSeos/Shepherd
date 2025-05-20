@@ -13,7 +13,7 @@ pub mod modify;
 use anyhow::{bail, Context, Result};
 use file::{file_extension_from_format, FileFormat};
 
-use models::{CreatedObject, ObjectType};
+use models::{ConversionError, CreatedObject, ObjectType};
 
 use serde_json::Value;
 use std::collections::HashMap;
@@ -197,7 +197,7 @@ pub async fn download_current_configuration(
 
             let rancher_prtbs = prtb::get_namespaced_project_role_template_bindings(
                 configuration,
-                &project.id.as_ref().unwrap().to_string(),
+                &project.id.clone().unwrap(),
                 None,
                 None,
                 None,
@@ -429,7 +429,9 @@ pub async fn load_configuration(
             ));
 
             if !project_file.exists() {
-                bail!("Project file does not exist: {:?}", project_file);
+                error!("Project file does not exist: {:?}", project_file);
+                // we ignore projects that don't have a project file
+                continue;
             }
 
             let content = read_to_string(&project_file)
@@ -440,7 +442,12 @@ pub async fn load_configuration(
                     format!("Failed to deserialize project file: {:?}", project_file)
                 })?;
 
-            let project_id = project.id.clone().unwrap_or_else(|| "default".to_string());
+            // clone the project id and check if None and if so move on, it might be a new project
+            let project_id = project.id.clone();
+            if project_id.is_none() {
+                continue;
+            }
+            let project_id = project_id.unwrap();
 
             cluster_config
                 .projects
@@ -782,7 +789,7 @@ pub fn serialize_object<T: serde::Serialize>(
 pub fn deserialize_object<T: serde::de::DeserializeOwned>(
     object: &str,
     file_format: &FileFormat,
-) -> Result<T> {
+) -> Result<T, ConversionError> {
     match file_format {
         FileFormat::Yaml => serde_yaml::from_str(object).map_err(|e| e.into()),
         FileFormat::Json => serde_json::from_str(object).map_err(|e| e.into()),

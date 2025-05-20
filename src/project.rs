@@ -27,6 +27,7 @@ use rancher_client::{
     },
 };
 use tokio::fs::{metadata, read_to_string};
+use tracing::error;
 
 use crate::{deserialize_object, file::{file_extension_from_format, FileFormat}, };
 
@@ -332,6 +333,7 @@ pub async fn create_project(
                     Err(e) => Err(Error::Serde(e)),
                 }
             } else {
+                error!("Failed to create project: {:#?}", resp);
                 // Pass through all other response errors
                 Err(Error::ResponseError(resp))
             }
@@ -462,7 +464,6 @@ pub struct Project {
     pub cluster_name: String,
 
     /// Unique project ID (typically the Kubernetes metadata.name).
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
 
     /// Human-readable description of the project.
@@ -550,8 +551,8 @@ impl TryFrom<IoCattleManagementv3Project> for Project {
     type Error = ConversionError;
 
     fn try_from(value: IoCattleManagementv3Project) -> Result<Self, Self::Error> {
-        let metadata = value.metadata.ok_or(ConversionError::MissingField("metadata"))?;
-        let spec = value.spec.ok_or(ConversionError::MissingField("spec"))?;
+        let metadata = value.metadata.ok_or(ConversionError::MissingField("metadata".into()))?;
+        let spec = value.spec.ok_or(ConversionError::MissingField("spec".into()))?;
 
         // let container_default_resource_limit = spec
         //     .container_default_resource_limit
@@ -601,7 +602,7 @@ impl TryFrom<Project> for IoCattleManagementv3Project {
     fn try_from(value: Project) -> Result<Self, Self::Error> {
         // Construct metadata
         let metadata = IoK8sApimachineryPkgApisMetaV1ObjectMeta {
-            name: value.id.clone(),
+            name: value.id,
             annotations: value.annotations.clone().map(|a| {
                 a.into_iter()
                     .collect::<std::collections::HashMap<String, String>>()

@@ -1,8 +1,9 @@
 use std::{error::Error, path::{Path, PathBuf}};
 
 use async_recursion::async_recursion;
-use git2::{Commit, IndexAddOption, ProxyOptions, PushOptions, Repository, Signature, Status};
+use git2::{Commit, IndexAddOption, ProxyOptions, PushOptions, Repository, Signature, Status, StatusOptions};
 use tokio::fs::read_dir;
+use tracing::warn;
 
 use crate::models::ObjectType;
 
@@ -359,6 +360,70 @@ pub async fn get_new_uncommited_files(
 
 
 
+/// Collect the deleted files from a given folder path
+///
+/// # Arguments
+/// * `folder_path` - The path of the folder to collect files from.
+///
+/// # Returns
+/// A vector containing the absolute paths of all deleted files
+/// in the specified folder and its subfolders, along with their corresponding
+/// object type.
+
+#[async_backtrace::framed]
+#[async_recursion]
+pub async fn get_deleted_files(
+    folder_path: &Path,
+) -> Result<Vec<(ObjectType, PathBuf)>, Box<dyn Error>> {
+    let repo = Repository::discover(folder_path)
+        .map_err(|e| format!("Failed to open Git repo: {}", e))?;
+    let workdir = repo
+        .workdir()
+        .ok_or("Repository has no working directory")?;
+
+    let mut deleted_files = Vec::new();
+
+    let mut opts = StatusOptions::new();
+    opts.include_untracked(false)
+        .include_ignored(false)
+        .recurse_untracked_dirs(true)
+        .include_unmodified(false);
+
+    let statuses = repo.statuses(Some(&mut opts))?;
+
+    for entry in statuses.iter() {
+        let status = entry.status();
+        let rel_path = match entry.path() {
+            Some(p) => p,
+            None => continue,
+        };
+
+        if status.contains(Status::WT_DELETED) {
+            let full_path = workdir.join(rel_path);
+            let object_type = determine_object_type(Path::new(rel_path));
+            deleted_files.push((object_type, full_path));
+        }
+    }
+
+    Ok(deleted_files)
+}
+
+
+
+
+    /// Determine the object type from a path.
+    ///
+    /// # Arguments
+    /// * `path` - The path to determine the object type from.
+    ///
+    /// # Returns
+    /// The object type determined from the path.
+    ///
+    /// # Examples
+    /// * A path like `.../cluster-id/cluster-id.yaml` would return `ObjectType::Cluster`.
+    /// * A path like `.../project-name/project-name.yaml` would return `ObjectType::Project`.
+    /// * A path like `.../project-name/prtb-123456.yaml` would return `ObjectType::ProjectRoleTemplateBinding`.
+    /// * A path like `.../roles/rt-123456.yaml` would return `ObjectType::RoleTemplate`.
 fn determine_object_type(path: &Path) -> ObjectType {
     let filename = path.file_stem().and_then(|f| f.to_str()).unwrap_or_default();
     let parent = path.parent().and_then(|p| p.file_name()).and_then(|p| p.to_str()).unwrap_or_default();
@@ -384,3 +449,57 @@ fn determine_object_type(path: &Path) -> ObjectType {
 }
 
 
+#[async_backtrace::framed]
+pub async fn get_deleted_files_and_contents(
+    folder_path: &Path,
+) -> Result<Vec<(ObjectType, PathBuf, String)>, Box<dyn Error>> {
+    let repo = Repository::discover(folder_path)
+        .map_err(|e| format!("Failed to open Git repo: {}", e))?;
+    let workdir = repo
+        .workdir()
+        .ok_or("Repository has no working directory")?;
+
+    let mut deleted_files = Vec::new();
+
+    let mut opts = StatusOptions::new();
+    opts.include_untracked(false)
+        .include_ignored(false)
+        .include_unmodified(false)
+        .recurse_untracked_dirs(true);
+
+    let statuses = repo.statuses(Some(&mut opts))?;
+
+    let head_commit = repo.revparse_single("HEAD^{commit}")?;
+    let tree = head_commit.peel_to_tree()?;
+
+    for entry in statuses.iter() {
+        let status = entry.status();
+        let rel_path = match entry.path() {
+            Some(p) => p,
+            None => continue,
+        };
+
+        if status.contains(Status::WT_DELETED) {
+            let full_path = workdir.join(rel_path);
+            let git_rel_path = Path::new(rel_path);
+
+            // Attempt to retrieve blob from HEAD commit
+            match tree.get_path(git_rel_path) {
+                Ok(tree_entry) => {
+                    let object = tree_entry.to_object(&repo)?;
+                    let blob = object.peel_to_blob()?;
+                    let contents = String::from_utf8(blob.content().to_vec())
+                        .map_err(|e| format!("Invalid UTF-8 in blob: {}", e))?;
+
+                    let object_type = determine_object_type(git_rel_path);
+                    deleted_files.push((object_type, full_path, contents));
+                }
+                Err(e) => {
+                    warn!(?rel_path, "Unable to retrieve blob from HEAD: {}", e);
+                }
+            }
+        }
+    }
+
+    Ok(deleted_files)
+}

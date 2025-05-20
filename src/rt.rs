@@ -387,6 +387,8 @@ pub struct RoleTemplate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_creator_default: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub resource_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub role_template_names: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rules: Option<Vec<IoCattleManagementv3GlobalRoleRulesInner>>,
@@ -407,6 +409,7 @@ impl RoleTemplate {
         locked: Option<bool>,
         id: String,
         project_creator_default: Option<bool>,
+        resource_version: Option<String>,
         role_template_names: Option<Vec<String>>,
         rules: Option<Vec<IoCattleManagementv3GlobalRoleRulesInner>>,
     ) -> Self {
@@ -423,6 +426,7 @@ impl RoleTemplate {
             labels,
             locked,
             id,
+            resource_version,
             project_creator_default,
             role_template_names,
             rules,
@@ -434,7 +438,7 @@ impl TryFrom<IoCattleManagementv3RoleTemplate> for RoleTemplate {
     type Error = ConversionError;
 
     fn try_from(value: IoCattleManagementv3RoleTemplate) -> Result<Self, Self::Error> {
-        let metadata: IoK8sApimachineryPkgApisMetaV1ObjectMeta = value.metadata.ok_or(ConversionError::MissingField("metadata.name"))?;
+        let metadata: IoK8sApimachineryPkgApisMetaV1ObjectMeta = value.metadata.ok_or(ConversionError::MissingField("metadata.name".into()))?;
 
         let administrative: Option<bool> = value.administrative;
         let annotations: Option<HashMap<String, String>> = metadata.annotations;
@@ -448,6 +452,7 @@ impl TryFrom<IoCattleManagementv3RoleTemplate> for RoleTemplate {
         let labels: Option<HashMap<String, String>> = metadata.labels;
         let locked: Option<bool> = value.locked;
         let project_creator_default: Option<bool> = value.project_creator_default;
+        let resource_version: Option<String> = metadata.resource_version;
         let role_template_names: Option<Vec<String>> = value.role_template_names;
         let rules: Option<Vec<IoCattleManagementv3GlobalRoleRulesInner>> = value.rules;
 
@@ -461,10 +466,11 @@ impl TryFrom<IoCattleManagementv3RoleTemplate> for RoleTemplate {
             display_name,
             external,
             hidden,
-            id: metadata.name.ok_or(ConversionError::MissingField("metadata.name"))?,
+            id: metadata.name.ok_or(ConversionError::MissingField("metadata.name".into()))?,
             labels,
             locked,
             project_creator_default,
+            resource_version,
             role_template_names,
             rules,
         })
@@ -592,6 +598,7 @@ mod tests {
             Some(false), // locked
             "admin-template".to_string(), // id
             Some(false), // project_creator_default
+            None,
             Some(vec!["base-template".to_string()]), // role_template_names
             Some(vec![]), // rules
         )

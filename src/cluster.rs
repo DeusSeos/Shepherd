@@ -115,11 +115,11 @@ impl TryFrom<IoCattleManagementv3Cluster> for Cluster {
 
     fn try_from(value: IoCattleManagementv3Cluster) -> Result<Self, Self::Error> {
         let metadata: IoK8sApimachineryPkgApisMetaV1ObjectMeta =
-            value.metadata.ok_or(ConversionError::MetadataError("missing metadata".to_string()))?;
+            value.metadata.ok_or(ConversionError::MetadataError("missing metadata".to_string().into()))?;
         let spec: IoCattleManagementv3ClusterSpec = *value.spec;
 
         Ok(Cluster {
-            id: metadata.name.ok_or(ConversionError::MissingField("missing metadata.name"))?,
+            id: metadata.name.ok_or(ConversionError::MissingField("missing metadata.name".into()))?,
             display_name: spec.display_name,
             description: spec.description,
         })
@@ -253,7 +253,7 @@ mod tests {
 
         let result = Cluster::try_from(ioc);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ConversionError::MetadataError("missing metadata".to_string()));
+        assert_eq!(result.unwrap_err(), ConversionError::MetadataError("missing metadata".to_string().into()));
     }
 
     #[test]
@@ -263,7 +263,7 @@ mod tests {
 
         let result = Cluster::try_from(ioc);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ConversionError::MissingField("missing name"));
+        assert_eq!(result.unwrap_err(), ConversionError::MissingField("missing name".into()));
     }
 
     #[test]
