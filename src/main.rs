@@ -78,7 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // TODO: change this to use format fetched from our custom config file
     let file_format = FileFormat::Yaml;
 
-    let download = true;
+    let download = false;
 
     if download {
         // Download the current configuration from the Rancher API
@@ -89,7 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let remote_url = "git@github.com:DeusSeos/rancher_config.git";
 
         // Initialize a git repository in the path or if error, commit a change with current datetime
-        init_git_repo_with_main_branch(&config_folder_path, &remote_url).unwrap_or_else(|_| {
+        init_git_repo_with_main_branch(&config_folder_path, remote_url).unwrap_or_else(|_| {
             // commit a change with current datetime
             let now = chrono::Utc::now();
             let datetime = now.format("%Y-%m-%d %H:%M:%S").to_string();

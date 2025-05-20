@@ -371,7 +371,7 @@ pub async fn load_project(
     
     metadata(&project_path).await.map_err(|_| format!("Project path does not exist: {:?}", project_path))?
         .is_dir()
-        .then(|| ())
+        .then_some(())
         .ok_or_else(|| format!("Not a directory: {:?}", project_path))?;
 
     // build the file path
@@ -386,7 +386,7 @@ pub async fn load_project(
         .await
         .map_err(|_| format!("Project file does not exist: {:?}", project_file))?
         .is_file()
-        .then(|| ())
+        .then_some(())
         .ok_or_else(|| format!("Not a file: {:?}", project_file))?;
 
     // read and deserialize
@@ -639,7 +639,6 @@ impl TryFrom<Project> for IoCattleManagementv3Project {
                     ..Default::default()
                 }
             }),
-            ..Default::default()
         };
 
         Ok(IoCattleManagementv3Project {

@@ -32,7 +32,7 @@ impl std::fmt::Display for FileFormat {
 /// # Returns
 /// * `Result<MinimalObject, ConversionError>` - The minimal object loaded from the file
 ///
-pub async fn get_minimal_object_from_path(object_type: ObjectType, path: &PathBuf) -> Result<MinimalObject, ConversionError> {
+pub async fn get_minimal_object_from_path(object_type: ObjectType, path: &Path) -> Result<MinimalObject, ConversionError> {
     let file_format = file_format_from_path(path);
     match object_type {
         ObjectType::Project => {

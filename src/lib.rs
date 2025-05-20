@@ -644,7 +644,7 @@ async fn poll_role_template_ready(
         let config = config.clone();
 
         async move {
-            match find_role_template(&*config, &rt_name, resource_version.as_deref()).await {
+            match find_role_template(&config, &rt_name, resource_version.as_deref()).await {
                 Ok(rt) => Ok(Some(rt)),
                 Err(e) => Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
             }
@@ -682,7 +682,7 @@ async fn poll_project_ready(
         let resource_version = resource_version.map(|s| s.to_string());
 
         async move {
-            match find_project(&*config, &c_name, &p_name, resource_version.as_deref()).await {
+            match find_project(&config, &c_name, &p_name, resource_version.as_deref()).await {
                 Ok(p) => {
                     info!("Found project: {:?}", p_name);
                     Ok(Some(p))

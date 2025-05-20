@@ -43,16 +43,16 @@ impl From<toml::de::Error> for ConversionError {
 }
 
 // Implement Into for ConversionError
-impl Into<ConversionError> for Box<dyn std::error::Error + Send + Sync> {
-    fn into(self) -> ConversionError {
-        ConversionError::Other(self.to_string().into())
+impl From<Box<dyn std::error::Error + Send + Sync>> for ConversionError {
+    fn from(val: Box<dyn std::error::Error + Send + Sync>) -> Self {
+        ConversionError::Other(val.to_string().into())
     }
 }
 
 
-impl Into<ConversionError> for std::io::Error {
-    fn into(self) -> ConversionError {
-        ConversionError::Other(self.to_string().into())
+impl From<std::io::Error> for ConversionError {
+    fn from(val: std::io::Error) -> Self {
+        ConversionError::Other(val.to_string().into())
     }
 }
 

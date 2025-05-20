@@ -303,7 +303,6 @@ pub async fn create_project_role_template_binding(
     project_id: &str,
     body: IoCattleManagementv3ProjectRoleTemplateBinding,
 ) -> Result<IoCattleManagementv3ProjectRoleTemplateBinding, Error<CreateManagementCattleIoV3NamespacedProjectRoleTemplateBindingError>> {
-    let body: IoCattleManagementv3ProjectRoleTemplateBinding = IoCattleManagementv3ProjectRoleTemplateBinding::try_from(body).expect("Failed to convert ProjectRoleTemplateBinding into IoCattleManagementv3ProjectRoleTemplateBinding");
 
     let result = create_management_cattle_io_v3_namespaced_project_role_template_binding(configuration, project_id, body, None, None, Some(crate::FULL_CLIENT_ID), None).await;
 

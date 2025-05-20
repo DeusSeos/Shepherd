@@ -1,4 +1,4 @@
-use crate::{cluster, poll_project_ready, poll_role_template_ready, retry_async, RoleTemplate};
+use crate::{poll_project_ready, poll_role_template_ready, retry_async, RoleTemplate};
 use crate::diff::compute_cluster_diff;
 use crate::models::{ConversionError, CreatedObject, MinimalObject};
 use crate::project::{create_project, delete_project, update_project};
@@ -83,7 +83,7 @@ async fn handle_diff(
         ObjectType::Project => {
             let ns = namespace.as_deref().unwrap_or("<no-namespace>");
             debug!("Updating project `{}` in cluster `{} with diff: {:#?}`", object_id, ns, diff_value);
-            let object = update_project(&configuration, &ns, &object_id, diff_value).await;
+            let object = update_project(&configuration, ns, &object_id, diff_value).await;
             match object {
                 Ok(object) => {
                     info!("Updated project `{}` ({}) in cluster `{}`", object_id, object.spec.as_ref().unwrap().display_name, ns);
@@ -107,7 +107,7 @@ async fn handle_diff(
             let ns = namespace.as_deref().unwrap_or("<no-namespace>");
             info!("Updated prtb `{}` in namespace `{}`", object_id, ns);
             debug!("Updated prtb `{}` in namespace `{}` with diff: {:#?} ", object_id, ns, diff_value);
-            let object = update_project_role_template_binding(&configuration, &ns, &object_id, diff_value).await;
+            let object = update_project_role_template_binding(&configuration, ns, &object_id, diff_value).await;
             match object {
                 Ok(object) => Ok(CreatedObject::ProjectRoleTemplateBinding(object)),
                 Err(e) => Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
@@ -163,7 +163,7 @@ async fn delete_object(
                 }) as Box<dyn std::error::Error + Send + Sync>);
             }
             info!("Deleting project `{}` from cluster `{}`", minimal_object.object_id.as_ref().unwrap(), cluster_id);
-            let object = delete_project(&configuration, cluster_id, &minimal_object.object_id.as_ref().unwrap().as_ref()).await;
+            let object = delete_project(configuration, cluster_id, minimal_object.object_id.as_ref().unwrap().as_ref()).await;
             match object {
                 Ok(object) => { 
                     info!("Deleted project `{}` ({}) from cluster `{}`", minimal_object.object_id.as_ref().unwrap(), object.spec.as_ref().unwrap().display_name, cluster_id); 
@@ -182,7 +182,7 @@ async fn delete_object(
                 }) as Box<dyn std::error::Error + Send + Sync>);
             }
             info!("Deleting role-template `{}`", minimal_object.object_id.as_ref().unwrap());
-            let object = delete_role_template(&configuration, &minimal_object.object_id.as_ref().unwrap().as_ref()).await;
+            let object = delete_role_template(configuration, minimal_object.object_id.as_ref().unwrap().as_ref()).await;
             match object {
                 Ok(object) => Ok(CreatedObject::RoleTemplate(object)),
                 Err(e) => Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
@@ -191,7 +191,7 @@ async fn delete_object(
         ObjectType::ProjectRoleTemplateBinding => {
             let cluster_id = minimal_object.namespace.as_deref().unwrap_or("<no-namespace>");
             info!("Deleting prtb `{}` from cluster `{}`", minimal_object.object_id.as_ref().unwrap(), cluster_id);
-            let object = delete_project_role_template_binding(&configuration, cluster_id, &minimal_object.object_id.as_ref().unwrap().as_ref()).await;
+            let object = delete_project_role_template_binding(configuration, cluster_id, minimal_object.object_id.as_ref().unwrap().as_ref()).await;
             match object {
                 Ok(object) => Ok(CreatedObject::ProjectRoleTemplateBinding(object)),
                 Err(e) => Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
