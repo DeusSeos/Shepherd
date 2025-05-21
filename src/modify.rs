@@ -14,7 +14,7 @@ use rancher_client::models::{IoCattleManagementv3Project, IoCattleManagementv3Pr
 use reqwest::StatusCode;
 
 use futures::{stream, FutureExt, StreamExt};
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 
 use crate::project::Project;
@@ -45,7 +45,9 @@ pub async fn compare_and_update_configurations(
 ) -> Vec<Result<CreatedObject, Box<dyn std::error::Error + Send + Sync>>> {
     // Load the stored configuration
     let stored_config = load_configuration(config_folder_path, &configuration.base_path, cluster_id, file_format).await.unwrap().unwrap();
+    debug!("Loaded stored configuration for cluster `{}`: {} ", cluster_id, stored_config);
     let stored_config: RancherClusterConfig = RancherClusterConfig::try_from(stored_config).unwrap();
+
 
     // Load the live Rancher configuration
     let live_config = load_configuration_from_rancher(&configuration, cluster_id).await.unwrap();
@@ -133,8 +135,13 @@ pub async fn delete_objects(
     let mut results = Vec::with_capacity(deleted_files.len());
     for (object_type, minimal_object) in deleted_files {
         match delete_object(&configuration, &object_type, &minimal_object).await {
-            Ok(object) => results.push(Ok(object)),
-            Err(e) => results.push(Err(e)),
+            Ok(object) => {
+                info!("Deleted object: {:#?}", minimal_object);
+                results.push(Ok(object))
+            },
+            Err(e) => { 
+                error!("Error deleting {:?} object: {}", minimal_object,  e);
+                results.push(Err(e))},
         }
     }
     results
@@ -170,7 +177,9 @@ async fn delete_object(
                     Ok(CreatedObject::Project(object))
             }
                 ,
-                Err(e) => Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                Err(e) => {
+                    error!("Failed to delete project `{}` from cluster `{}`: {}", minimal_object.object_id.as_ref().unwrap(), cluster_id, e);
+                    Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>)}
             }
         }
 
@@ -184,8 +193,13 @@ async fn delete_object(
             info!("Deleting role-template `{}`", minimal_object.object_id.as_ref().unwrap());
             let object = delete_role_template(configuration, minimal_object.object_id.as_ref().unwrap().as_ref()).await;
             match object {
-                Ok(object) => Ok(CreatedObject::RoleTemplate(object)),
-                Err(e) => Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                Ok(object) => {
+                    info!("Deleted role-template `{}`", minimal_object.object_id.as_ref().unwrap());
+                    Ok(CreatedObject::RoleTemplate(object))},
+                Err(e) => {
+                    error!("Failed to delete role-template `{}`: {}", minimal_object.object_id.as_ref().unwrap(), e);
+                    Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                }
             }
         }
         ObjectType::ProjectRoleTemplateBinding => {
@@ -193,8 +207,14 @@ async fn delete_object(
             info!("Deleting prtb `{}` from cluster `{}`", minimal_object.object_id.as_ref().unwrap(), cluster_id);
             let object = delete_project_role_template_binding(configuration, cluster_id, minimal_object.object_id.as_ref().unwrap().as_ref()).await;
             match object {
-                Ok(object) => Ok(CreatedObject::ProjectRoleTemplateBinding(object)),
-                Err(e) => Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                Ok(object) => {
+                    info!("Deleted prtb `{}` from cluster `{}`", minimal_object.object_id.as_ref().unwrap(), cluster_id);
+                    Ok(CreatedObject::ProjectRoleTemplateBinding(object))
+                },
+                Err(e) => {
+                    error!("Failed to delete prtb `{}` from cluster `{}`: {}", minimal_object.object_id.as_ref().unwrap(), cluster_id, e);
+                    Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                }
             }
         }
         _ => panic!("Unsupported object type: {:?}", object_type),

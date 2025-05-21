@@ -3,9 +3,9 @@ use std::{error::Error, path::{Path, PathBuf}};
 use async_recursion::async_recursion;
 use git2::{Commit, IndexAddOption, ProxyOptions, PushOptions, Repository, Signature, Status, StatusOptions};
 use tokio::fs::read_dir;
-use tracing::warn;
+use tracing::{debug, warn};
 
-use crate::models::ObjectType;
+use crate::{file::{file_extension_from_format, FileFormat}, models::ObjectType};
 
 
 /// Initialize a local git repository in the folder
@@ -409,45 +409,47 @@ pub async fn get_deleted_files(
 }
 
 
-
-
-    /// Determine the object type from a path.
-    ///
-    /// # Arguments
-    /// * `path` - The path to determine the object type from.
-    ///
-    /// # Returns
-    /// The object type determined from the path.
-    ///
-    /// # Examples
-    /// * A path like `.../cluster-id/cluster-id.yaml` would return `ObjectType::Cluster`.
-    /// * A path like `.../project-name/project-name.yaml` would return `ObjectType::Project`.
-    /// * A path like `.../project-name/prtb-123456.yaml` would return `ObjectType::ProjectRoleTemplateBinding`.
-    /// * A path like `.../roles/rt-123456.yaml` would return `ObjectType::RoleTemplate`.
+ /// Determine the object type from a path.
+///
+/// # Arguments
+/// * `path` - The path to determine the object type from.
+///
+/// # Returns
+/// The object type determined from the path.
 fn determine_object_type(path: &Path) -> ObjectType {
-    let filename = path.file_stem().and_then(|f| f.to_str()).unwrap_or_default();
-    let parent = path.parent().and_then(|p| p.file_name()).and_then(|p| p.to_str()).unwrap_or_default();
+    let file_name = path.file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or_default();
 
-    if path.components().any(|c| c.as_os_str() == "roles") {
-        ObjectType::RoleTemplate
-    } else if filename != parent {
-        // If the filename doesn't match the directory name, and it's inside a project folder (likely PRTB)
+    if file_name.ends_with(&format!(".project.{}", file_extension_from_format(&FileFormat::Yaml))) || 
+       file_name.ends_with(&format!(".project.{}", file_extension_from_format(&FileFormat::Json))) || 
+       file_name.ends_with(&format!(".project.{}", file_extension_from_format(&FileFormat::Toml))) {
+        ObjectType::Project
+    } else if file_name.ends_with(&format!(".prtb.{}", file_extension_from_format(&FileFormat::Yaml))) || 
+              file_name.ends_with(&format!(".prtb.{}", file_extension_from_format(&FileFormat::Json))) || 
+              file_name.ends_with(&format!(".prtb.{}", file_extension_from_format(&FileFormat::Toml))) {
         ObjectType::ProjectRoleTemplateBinding
-    } else if filename == parent {
-        // This would match `.../cluster-id/cluster-id.yaml` or `.../project-name/project-name.yaml`
-        if path.ancestors().nth(2)  // e.g. .../cluster-id
-            .and_then(|p| p.file_name())
-            .and_then(|n| n.to_str()) == Some(parent)
-        {
-            ObjectType::Cluster
+    } else if file_name.ends_with(&format!(".rt.{}", file_extension_from_format(&FileFormat::Yaml))) || 
+              file_name.ends_with(&format!(".rt.{}", file_extension_from_format(&FileFormat::Json))) || 
+              file_name.ends_with(&format!(".rt.{}", file_extension_from_format(&FileFormat::Toml))) {
+        ObjectType::RoleTemplate
+    } else if file_name.ends_with(&format!(".cluster.{}", file_extension_from_format(&FileFormat::Yaml))) || 
+              file_name.ends_with(&format!(".cluster.{}", file_extension_from_format(&FileFormat::Json))) || 
+              file_name.ends_with(&format!(".cluster.{}", file_extension_from_format(&FileFormat::Toml))) {
+        ObjectType::Cluster
+    } else {
+        // Legacy support or default
+        debug!("Could not determine object type from filename: {}", file_name);
+        if path.components().any(|c| c.as_os_str() == "roles") {
+            ObjectType::RoleTemplate
+        } else if file_name.starts_with("prtb-") {
+            ObjectType::ProjectRoleTemplateBinding
         } else {
+            // Default to Project
             ObjectType::Project
         }
-    } else {
-        ObjectType::Project
     }
 }
-
 
 #[async_backtrace::framed]
 pub async fn get_deleted_files_and_contents(
@@ -491,7 +493,9 @@ pub async fn get_deleted_files_and_contents(
                     let contents = String::from_utf8(blob.content().to_vec())
                         .map_err(|e| format!("Invalid UTF-8 in blob: {}", e))?;
 
+                    // Use our updated determine_object_type function
                     let object_type = determine_object_type(git_rel_path);
+                    debug!("Determined object type {:?} for deleted file {:?}", object_type, git_rel_path);
                     deleted_files.push((object_type, full_path, contents));
                 }
                 Err(e) => {

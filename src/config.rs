@@ -18,7 +18,7 @@ impl Display for ClusterConfig {
         writeln!(f, "Cluster: {}", self.cluster.display_name)?;
         writeln!(f, "Role Templates:")?;
         for rt in &self.role_templates {
-            writeln!(f, "  - {:?}", rt.display_name)?;
+            writeln!(f, "  - {:?}", rt.display_name.as_ref().unwrap())?;
         }
         writeln!(f, "Projects:")?;
         for (project_id, (project, bindings)) in &self.projects {

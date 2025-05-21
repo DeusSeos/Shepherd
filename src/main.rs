@@ -1,59 +1,42 @@
 #![allow(unused_variables)]
-#![allow(unused_imports)]
+// #![allow(unused_imports)]
 
-use std::collections::HashMap;
 use std::error::Error;
-use std::future::Future;
 use std::path::PathBuf;
-use std::pin::Pin;
 use std::sync::Arc;
 
-use json_patch::jsonptr::delete;
-use rancher_cac::cluster::Cluster;
-use rancher_cac::config::RancherClusterConfig;
-use rancher_cac::diff::{compute_cluster_diff, create_json_patch};
-use rancher_cac::file::write_object_to_file;
 use rancher_cac::file::{
-    get_minimal_object_from_contents, get_minimal_object_from_path, write_back_objects, FileFormat,
+    get_minimal_object_from_contents, write_back_objects, FileFormat,
 };
 use rancher_cac::git::{
-    commit_changes, get_deleted_files, get_deleted_files_and_contents, get_modified_files,
-    get_new_uncommited_files, init_git_repo_with_main_branch, push_repo_to_remote,
+    commit_changes, get_deleted_files_and_contents, get_modified_files,
+    get_new_uncommited_files, init_git_repo_with_main_branch,
 };
 use rancher_cac::models::MinimalObject;
 use rancher_cac::modify::{compare_and_update_configurations, create_objects, delete_objects};
-use rancher_cac::project::{
-    create_project, find_project, get_projects, load_project, show_project_diff, show_text_diff,
-    update_project, Project, PROJECT_EXCLUDE_PATHS,
-};
-use rancher_cac::prtb::{create_project_role_template_binding, ProjectRoleTemplateBinding};
-use rancher_cac::rt::{create_role_template, RoleTemplate};
 use rancher_cac::{
-    download_current_configuration, load_configuration, load_configuration_from_rancher,
-    load_object, models::CreatedObject, models::ObjectType, rancher_config_init,
+    download_current_configuration, models::CreatedObject, models::ObjectType, rancher_config_init,
 };
 
-use rancher_client::apis::configuration;
-use serde::de;
-use tracing::{debug, error, info};
-use tracing_subscriber::fmt::format::FmtSpan;
+use tracing::{error, info};
+use tracing_subscriber::EnvFilter;
 
-use ::futures::future::join_all;
-use rancher_client::models::{
-    IoCattleManagementv3Project, IoCattleManagementv3ProjectRoleTemplateBinding,
-    IoCattleManagementv3RoleTemplate,
-};
 use reqwest_middleware::ClientBuilder;
-use serde_json::json;
-use tokio::sync::futures;
-use tokio::task::JoinHandle;
+
+
+fn init_tracing() {
+    // Initialize the tracing subscriber using RUST_LOG environment variable
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .with_file(true)
+        .with_line_number(true)
+        .init();
+}
 
 // /*
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_span_events(FmtSpan::ENTER | FmtSpan::EXIT)
-        .init();
+    init_tracing();
 
     // TODO: change this to use URL and token fetched from our custom config file
     let mut configuration = rancher_config_init(

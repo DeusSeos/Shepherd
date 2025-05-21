@@ -62,14 +62,17 @@ pub async fn get_minimal_object_from_contents(
 ) -> Result<MinimalObject, ConversionError> {
     match object_type {
         ObjectType::Project => {
+            debug!("Deserializing Project: {:#?}", contents);
             let object: Project = deserialize_object(contents, file_format)?;
             MinimalObject::try_from(object)
         },
         ObjectType::RoleTemplate => {
+            debug!("Deserializing RT: {:#?}", contents);
             let object: RoleTemplate = deserialize_object(contents, file_format)?;
             MinimalObject::try_from(object)
         },
         ObjectType::ProjectRoleTemplateBinding => {
+            debug!("Deserializing PRTB: {:#?}", contents);
             let object: ProjectRoleTemplateBinding = deserialize_object(contents, file_format)?;
             MinimalObject::try_from(object)
         },
@@ -133,6 +136,22 @@ pub async fn write_back_objects(
 
 }
 
+
+/// Get the file name for a specific object type
+pub fn get_file_name_for_object(
+    object_id: &str, 
+    object_type: &ObjectType, 
+    file_format: &FileFormat
+) -> String {
+    let extension = file_extension_from_format(file_format);
+    match object_type {
+        ObjectType::Project => format!("{}.project.{}", object_id, extension),
+        ObjectType::ProjectRoleTemplateBinding => format!("{}.prtb.{}", object_id, extension),
+        ObjectType::RoleTemplate => format!("{}.rt.{}", object_id, extension),
+        ObjectType::Cluster => format!("{}.cluster.{}", object_id, extension),
+        // _ => format!("{}.{}", object_id, extension),
+    }
+}
 
 
 /// Generic function to write any type of object to a file in the given path (overwrites file content)

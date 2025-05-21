@@ -467,7 +467,8 @@ pub struct Project {
     pub id: Option<String>,
 
     /// Human-readable description of the project.
-    pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 
     // annotations: Option<std::collections::HashMap<String, String>>,
     /// Annotations applied to the project.
@@ -502,10 +503,12 @@ pub struct Project {
     pub enable_project_monitoring: Option<bool>,
 
     /// Default resource quotas applied at the namespace level.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub namespace_default_resource_quota:
         Option<IoCattleManagementv3ProjectSpecNamespaceDefaultResourceQuota>,
 
     /// Resource quota limits applied at the project level.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub resource_quota: Option<IoCattleManagementv3ProjectSpecResourceQuotaLimit>,
 }
 
@@ -516,7 +519,7 @@ impl Project {
         container_default_resource_limit: Option<
             IoCattleManagementv3ProjectSpecContainerDefaultResourceLimit,
         >,
-        description: String,
+        description: Option<String>,
         display_name: String,
         enable_project_monitoring: Option<bool>,
         id: Option<String>,
@@ -582,7 +585,7 @@ impl TryFrom<IoCattleManagementv3Project> for Project {
             annotations,
             cluster_name: spec.cluster_name,
             container_default_resource_limit,
-            description: spec.description.unwrap_or_default(),
+            description: spec.description,
             display_name: spec.display_name,
             enable_project_monitoring: spec.enable_project_monitoring,
             id: metadata.name,
@@ -620,7 +623,7 @@ impl TryFrom<Project> for IoCattleManagementv3Project {
         // Construct spec
         let spec = IoCattleManagementv3ProjectSpec {
             cluster_name: value.cluster_name.clone(),
-            description: Some(value.description.clone()),
+            description: value.description.clone(),
             display_name: value.display_name.clone(),
             enable_project_monitoring: value.enable_project_monitoring,
             // container_default_resource_limit: value.container_default_resource_limit.clone().map(Box::new),
@@ -691,7 +694,7 @@ impl PartialEq<Project> for IoCattleManagementv3Project {
 
         metadata.name == other.id
             && spec.cluster_name == other.cluster_name
-            && spec.description.as_deref().unwrap_or_default() == other.description
+            && spec.description == other.description
             && spec.display_name == other.display_name
             && spec.enable_project_monitoring == other.enable_project_monitoring
             && metadata.annotations == annotations
@@ -779,7 +782,7 @@ mod tests {
             annotations: Some(std::collections::HashMap::new()),
             cluster_name: "cluster-1".to_string(),
             container_default_resource_limit: None,
-            description: "Test project".to_string(),
+            description: Some("Test project".to_string()),
             display_name: "Project One".to_string(),
             enable_project_monitoring: Some(true),
             id: Some("proj-1".to_string()),
@@ -830,7 +833,7 @@ mod tests {
         let mut project = sample_project();
         let rancher_project = sample_iocattle_project();
 
-        project.description = "Changed".to_string();
+        project.description = Some("Changed".to_string());
 
         assert_ne!(rancher_project, project);
         assert_ne!(project, rancher_project);
