@@ -13,8 +13,12 @@ use rancher_client::{
     apis::{
         configuration::Configuration,
         management_cattle_io_v3_api::{
-            create_management_cattle_io_v3_namespaced_project, delete_management_cattle_io_v3_namespaced_project, list_management_cattle_io_v3_namespaced_project, patch_management_cattle_io_v3_namespaced_project, read_management_cattle_io_v3_namespaced_project }, 
-        management_cattle_io_v3_api::{ DeleteManagementCattleIoV3NamespacedProjectError, CreateManagementCattleIoV3NamespacedProjectError, ListManagementCattleIoV3NamespacedProjectError, PatchManagementCattleIoV3NamespacedProjectError, ReadManagementCattleIoV3NamespacedProjectError},
+            create_management_cattle_io_v3_namespaced_project,
+            delete_management_cattle_io_v3_namespaced_project,
+            list_management_cattle_io_v3_namespaced_project,
+            patch_management_cattle_io_v3_namespaced_project,
+            read_management_cattle_io_v3_namespaced_project, CreateManagementCattleIoV3NamespacedProjectError, DeleteManagementCattleIoV3NamespacedProjectError, ListManagementCattleIoV3NamespacedProjectError, PatchManagementCattleIoV3NamespacedProjectError, ReadManagementCattleIoV3NamespacedProjectError,
+        },
         Error, ResponseContent,
     },
     models::{
@@ -23,13 +27,16 @@ use rancher_client::{
         IoCattleManagementv3ProjectSpecContainerDefaultResourceLimit,
         IoCattleManagementv3ProjectSpecNamespaceDefaultResourceQuota,
         IoCattleManagementv3ProjectSpecResourceQuotaLimit,
-        IoK8sApimachineryPkgApisMetaV1ObjectMeta, IoK8sApimachineryPkgApisMetaV1Patch,
+        IoK8sApimachineryPkgApisMetaV1ObjectMeta, IoK8sApimachineryPkgApisMetaV1Patch, IoK8sApimachineryPkgApisMetaV1Status,
     },
 };
 use tokio::fs::{metadata, read_to_string};
-use tracing::{error, debug, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
-use crate::{deserialize_object, file::{file_extension_from_format, FileFormat}, };
+use crate::{
+    deserialize_object,
+    file::{file_extension_from_format, FileFormat},
+};
 
 use crate::models::{ConversionError, ResourceVersionMatch};
 
@@ -91,51 +98,63 @@ pub async fn get_projects(
 
     match result {
         Err(e) => {
-            match e {
-                Error::ResponseError(ResponseContent { status, .. }) => {
-                    if status == StatusCode::UNAUTHORIZED {
-                        error!("Unauthorized to get projects. Please check your credentials");
-                    } else if status == StatusCode::NOT_FOUND {
-                        error!("Cluster not found. Please check the cluster id");
-                    } else if status == StatusCode::FORBIDDEN {
-                        error!("Forbidden to get projects. Please check your roles");
-                    } else {
-                        error!("Failed to get projects: {}", e);
-                    }
-                }
-                _ => {
-                    error!("Failed to get projects: {}", e);
-                }
-            }
-            Err(e)
+            error!("Failed to get projects: {}", e);
+            return Err(e);
         }
-        Ok(response_content) => {
-            // Match on the status code and deserialize accordingly
-            match response_content.status {
-                StatusCode::OK => {
-                    // Try to deserialize the content into IoCattleManagementv3ProjectList (Status200 case)
-                    match serde_json::from_str(&response_content.content) {
-                        Ok(data) => Ok(data),
-                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
-                    }
-                }
-                _ => {
-                    // If not status 200, treat as UnknownValue
+        Ok(response_content) => match response_content.status {
+            StatusCode::OK => match serde_json::from_str(&response_content.content) {
+                Ok(data) => Ok(data),
+                Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
+            },
+            StatusCode::UNAUTHORIZED => {
+                error!("Unauthorized to get projects. Please check your credentials");
+                Err(Error::ResponseError(ResponseContent {
+                    status: response_content.status,
+                    content: response_content.content,
+                    entity: None,
+                }))
+            }
+            StatusCode::NOT_FOUND => {
+                error!("Cluster not found. Please check the cluster id");
+                Err(Error::ResponseError(ResponseContent {
+                    status: response_content.status,
+                    content: response_content.content,
+                    entity: None,
+                }))
+            }
+            StatusCode::FORBIDDEN => {
+                error!("Forbidden to get projects. Please check your roles");
+                Err(Error::ResponseError(ResponseContent {
+                    status: response_content.status,
+                    content: response_content.content,
+                    entity: None,
+                }))
+            }
+            _ => {
+                error!(
+                    "Received unexpected status code: {}",
+                    response_content.status
+                );
+                let unknown_data =
                     match serde_json::from_str::<serde_json::Value>(&response_content.content) {
-                        Ok(unknown_data) => Err(Error::ResponseError(ResponseContent {
-                            status: response_content.status,
-                            content: response_content.content,
-                            entity: Some(
-                                ListManagementCattleIoV3NamespacedProjectError::UnknownValue(
-                                    unknown_data,
-                                ),
-                            ),
-                        })),
-                        Err(unknown_deserialize_err) => Err(Error::Serde(unknown_deserialize_err)),
-                    }
-                }
+                        Ok(val) => val,
+                        Err(deserialize_err) => {
+                            error!(
+                                "Failed to deserialize unknown response content: {}",
+                                deserialize_err
+                            );
+                            return Err(Error::Serde(deserialize_err));
+                        }
+                    };
+                Err(Error::ResponseError(ResponseContent {
+                    status: response_content.status,
+                    content: response_content.content,
+                    entity: Some(
+                        ListManagementCattleIoV3NamespacedProjectError::UnknownValue(unknown_data),
+                    ),
+                }))
             }
-        }
+        },
     }
 }
 
@@ -161,7 +180,10 @@ pub async fn find_project(
     project_id: &str,
     resource_version: Option<&str>,
 ) -> Result<IoCattleManagementv3Project, Error<ReadManagementCattleIoV3NamespacedProjectError>> {
-    debug!("Reading project with ID: {} from cluster: {}", project_id, cluster_id);
+    debug!(
+        "Reading project with ID: {} from cluster: {}",
+        project_id, cluster_id
+    );
 
     let result = read_management_cattle_io_v3_namespaced_project(
         configuration,
@@ -177,38 +199,68 @@ pub async fn find_project(
             error!("Failed to find project: {}", e);
             Err(e)
         }
-        Ok(response_content) => {
-            match response_content.status {
-                StatusCode::OK => {
-                    info!("Successfully found project with ID: {}", project_id);
-                    Ok(serde_json::from_str(&response_content.content)?)
-                }
-                StatusCode::NOT_FOUND => {
-                    warn!("Project with ID: {} not found", project_id);
-                    Err(Error::ResponseError(ResponseContent {
-                        status: response_content.status,
-                        content: response_content.content,
-                        entity: None,
-                    }))
-                }
-                StatusCode::UNAUTHORIZED => {
-                    warn!("Unauthorized access while trying to find project with ID: {}", project_id);
-                    Err(Error::ResponseError(ResponseContent {
-                        status: response_content.status,
-                        content: response_content.content,
-                        entity: None,
-                    }))
-                }
-                _ => {
-                    error!("Unknown error occurred: {}", response_content.content);
-                    Err(Error::ResponseError(ResponseContent {
-                        status: response_content.status,
-                        content: response_content.content,
-                        entity: None,
-                    }))
+        Ok(response_content) => match response_content.status {
+            StatusCode::OK => {
+                info!("Successfully found project with ID: {}", project_id);
+                match serde_json::from_str(&response_content.content) {
+                    Ok(data) => Ok(data),
+                    Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
                 }
             }
-        }
+            StatusCode::NOT_FOUND => {
+                error!("Project with ID: {} not found", project_id);
+                Err(Error::ResponseError(ResponseContent {
+                    status: response_content.status,
+                    content: response_content.content,
+                    entity: None,
+                }))
+            }
+            StatusCode::UNAUTHORIZED => {
+                error!(
+                    "Unauthorized access while trying to find project with ID: {}",
+                    project_id
+                );
+                Err(Error::ResponseError(ResponseContent {
+                    status: response_content.status,
+                    content: response_content.content,
+                    entity: None,
+                }))
+            }
+            StatusCode::FORBIDDEN => {
+                error!(
+                    "Forbidden access while trying to find project with ID: {}",
+                    project_id
+                );
+                Err(Error::ResponseError(ResponseContent {
+                    status: response_content.status,
+                    content: response_content.content,
+                    entity: None,
+                }))
+            }
+            _ => {
+                error!(
+                    "Received unexpected status code: {} when finding project with ID: {}",
+                    response_content.status, project_id
+                );
+                let unknown_data = match serde_json::from_str::<Value>(&response_content.content) {
+                    Ok(val) => val,
+                    Err(deserialize_err) => {
+                        error!(
+                            "Failed to deserialize unknown response content: {}",
+                            deserialize_err
+                        );
+                        return Err(Error::Serde(deserialize_err));
+                    }
+                };
+                Err(Error::ResponseError(ResponseContent {
+                    status: response_content.status,
+                    content: response_content.content,
+                    entity: Some(
+                        ReadManagementCattleIoV3NamespacedProjectError::UnknownValue(unknown_data),
+                    ),
+                }))
+            }
+        },
     }
 }
 
@@ -230,7 +282,10 @@ pub async fn update_project(
     project_id: &str,
     patch_value: Value,
 ) -> Result<IoCattleManagementv3Project, Error<PatchManagementCattleIoV3NamespacedProjectError>> {
-    info!("Patching project with ID: {} in cluster: {}", project_id, cluster_id);
+    info!(
+        "Patching project with ID: {} in cluster: {}",
+        project_id, cluster_id
+    );
 
     let patch_array = match patch_value {
         Value::Array(arr) => arr,
@@ -241,7 +296,10 @@ pub async fn update_project(
             )));
         }
         _ => {
-            error!("Expected patch to serialize to a JSON array, but got: {:?}", patch_value);
+            error!(
+                "Expected patch to serialize to a JSON array, but got: {:?}",
+                patch_value
+            );
             return Err(Error::Serde(serde_json::Error::custom(
                 "Expected patch to serialize to a JSON array",
             )));
@@ -266,38 +324,81 @@ pub async fn update_project(
     match result {
         Err(e) => {
             error!("Failed to patch project: {}", e);
-            Err(e)
+            return Err(e);
         }
-        Ok(response_content) => {
-            match response_content.status {
-                StatusCode::OK => {
-                    info!("Successfully patched project with ID: {}", project_id);
-                    match serde_json::from_str(&response_content.content) {
-                        Ok(data) => Ok(data),
-                        Err(deserialize_err) => {
-                            error!("Failed to deserialize response: {}", deserialize_err);
-                            Err(Error::Serde(deserialize_err))
-                        }
+        Ok(response_content) => match response_content.status {
+            StatusCode::OK => {
+                info!("Successfully patched project with ID: {}", project_id);
+                match serde_json::from_str(&response_content.content) {
+                    Ok(data) => Ok(data),
+                    Err(deserialize_err) => {
+                        error!("Failed to deserialize response: {}", deserialize_err);
+                        Err(Error::Serde(deserialize_err))
                     }
                 }
-                StatusCode::UNAUTHORIZED => {
-                    warn!("Unauthorized access while trying to patch project with ID: {}", project_id);
-                    Err(Error::ResponseError(ResponseContent {
-                        status: response_content.status,
-                        content: response_content.content,
-                        entity: None,
-                    }))
-                }
-                _ => {
-                    error!("Unknown error occurred: {}", response_content.content);
-                    Err(Error::ResponseError(ResponseContent {
-                        status: response_content.status,
-                        content: response_content.content,
-                        entity: None,
-                    }))
-                }
             }
-        }
+            StatusCode::NOT_FOUND => {
+                error!("Project with ID: {} not found", project_id);
+                Err(Error::ResponseError(ResponseContent {
+                    status: response_content.status,
+                    content: response_content.content,
+                    entity: None,
+                }))
+            }
+            StatusCode::UNAUTHORIZED => {
+                error!(
+                    "Unauthorized access while trying to patch project with ID: {}",
+                    project_id
+                );
+                Err(Error::ResponseError(ResponseContent {
+                    status: response_content.status,
+                    content: response_content.content,
+                    entity: None,
+                }))
+            }
+            StatusCode::BAD_REQUEST => {
+                error!(
+                    "Bad request when updating project with ID: {}. Request body was: {}",
+                    project_id, response_content.content
+                );
+                Err(Error::ResponseError(ResponseContent {
+                    status: response_content.status,
+                    content: response_content.content,
+                    entity: None,
+                }))
+            }
+            StatusCode::FORBIDDEN => {
+                error!("Forbidden to patch project with ID: {}", project_id);
+                Err(Error::ResponseError(ResponseContent {
+                    status: response_content.status,
+                    content: response_content.content,
+                    entity: None,
+                }))
+            }
+            _ => {
+                error!(
+                    "Received unexpected status code: {}",
+                    response_content.status
+                );
+                let unknown_data = match serde_json::from_str::<Value>(&response_content.content) {
+                    Ok(val) => val,
+                    Err(deserialize_err) => {
+                        error!(
+                            "Failed to deserialize unknown response content: {}",
+                            deserialize_err
+                        );
+                        return Err(Error::Serde(deserialize_err));
+                    }
+                };
+                Err(Error::ResponseError(ResponseContent {
+                    status: response_content.status,
+                    content: response_content.content,
+                    entity: Some(
+                        PatchManagementCattleIoV3NamespacedProjectError::UnknownValue(unknown_data),
+                    ),
+                }))
+            }
+        },
     }
 }
 
@@ -310,7 +411,7 @@ pub async fn update_project(
 /// * `IoCattleManagementv3Project`` - The project that was created
 /// # Errors
 /// * `Error<CreateManagementCattleIoV3NamespacedProjectError>` - The error that occurred during the request
-/// 
+///
 #[async_backtrace::framed]
 pub async fn create_project(
     configuration: &Configuration,
@@ -318,8 +419,11 @@ pub async fn create_project(
     body: IoCattleManagementv3Project,
 ) -> Result<IoCattleManagementv3Project, Error<CreateManagementCattleIoV3NamespacedProjectError>> {
     let project_id = body.metadata.as_ref().unwrap().name.clone().unwrap();
-    info!("Creating project in cluster: {} with ID: {}", cluster_id, project_id);
-    
+    info!(
+        "Creating project in cluster: {} with ID: {}",
+        cluster_id, project_id
+    );
+
     let result = create_management_cattle_io_v3_namespaced_project(
         configuration,
         cluster_id,
@@ -350,9 +454,11 @@ pub async fn create_project(
                     Ok(conflict_value) => Err(Error::ResponseError(ResponseContent {
                         status: resp.status,
                         content: resp.content,
-                        entity: Some(CreateManagementCattleIoV3NamespacedProjectError::UnknownValue(
-                            conflict_value,
-                        )),
+                        entity: Some(
+                            CreateManagementCattleIoV3NamespacedProjectError::UnknownValue(
+                                conflict_value,
+                            ),
+                        ),
                     })),
                     Err(e) => {
                         error!("Failed to deserialize conflict response: {}", e);
@@ -398,8 +504,10 @@ pub async fn load_project(
         .join(cluster_id)
         .join(project_name);
     // check if the path exists
-    
-    metadata(&project_path).await.map_err(|_| format!("Project path does not exist: {:?}", project_path))?
+
+    metadata(&project_path)
+        .await
+        .map_err(|_| format!("Project path does not exist: {:?}", project_path))?
         .is_dir()
         .then_some(())
         .ok_or_else(|| format!("Not a directory: {:?}", project_path))?;
@@ -436,13 +544,16 @@ pub async fn load_project(
 /// * `IoCattleManagementv3Project` - The deleted project  
 /// # Errors  
 /// * `Error<DeleteManagementCattleIoV3NamespacedProjectError>` - The error that occurred while trying to delete the project  
-#[async_backtrace::framed]  
-pub async fn delete_project(  
-    configuration: &Configuration,  
-    cluster_id: &str,  
+#[async_backtrace::framed]
+pub async fn delete_project(
+    configuration: &Configuration,
+    cluster_id: &str,
     project_id: &str,
-) -> Result<IoCattleManagementv3Project, Error<DeleteManagementCattleIoV3NamespacedProjectError>> {  
-    info!("Deleting project with ID: {} in cluster: {}", project_id, cluster_id);
+) -> Result<Result<IoCattleManagementv3Project, IoK8sApimachineryPkgApisMetaV1Status>, Error<DeleteManagementCattleIoV3NamespacedProjectError>> {
+    info!(
+        "Deleting project with ID: {} in cluster: {}",
+        project_id, cluster_id
+    );
     let result = delete_management_cattle_io_v3_namespaced_project(
         configuration,
         project_id,
@@ -458,35 +569,83 @@ pub async fn delete_project(
 
     match result {
         Err(e) => {
-            error!("Failed to delete project: {:#?}", e);
-            Err(e)
-        },
+            error!("Failed to delete project: {}", e);
+            return Err(e);
+        }
         Ok(response_content) => {
-            info!("Successfully deleted project with ID: {}", project_id);
+            trace!("Response: {}", response_content.content);
             match response_content.status {
                 StatusCode::OK => {
-                    // Try to deserialize the content into IoCattleManagementv3Project (Status200 case)
-                    match serde_json::from_str(&response_content.content) {
-                        Ok(data) => Ok(data),
-                        Err(deserialize_err) => {
-                            error!("Failed to deserialize response: {}", deserialize_err);
-                            Err(Error::Serde(deserialize_err))
-                        },
+                    info!("Successfully deleted project with ID: {}", project_id);
+                    // Try to deserialize as Project first
+                    match serde_json::from_str::<IoCattleManagementv3Project>(&response_content.content) {
+                        Ok(project) => Ok(Ok(project)),
+                        Err(_) => {
+                            // If that fails, try to deserialize as Status
+                            match serde_json::from_str::<IoK8sApimachineryPkgApisMetaV1Status>(&response_content.content) {
+                                Ok(status) => Ok(Err(status)),
+                                Err(deserialize_err) => {
+                                    error!("Failed to deserialize response as either Project or Status: {}", deserialize_err);
+                                    Err(Error::Serde(deserialize_err))
+                                }
+                            }
+                        }
                     }
-                },
-                _ => {
-                    warn!("Failed to delete project, unexpected status code: {}", response_content.status);
+                }
+                StatusCode::NOT_FOUND => {
+                    error!("Project with ID: {} not found", project_id);
                     Err(Error::ResponseError(ResponseContent {
                         status: response_content.status,
-                        content: response_content.content.clone(),
-                        entity: Some(DeleteManagementCattleIoV3NamespacedProjectError::UnknownValue(serde_json::from_str(&response_content.content).unwrap())),
+                        content: response_content.content,
+                        entity: None,
                     }))
-                },
+                }
+                StatusCode::UNAUTHORIZED => {
+                    error!("Unauthorized to delete project with ID: {}", project_id);
+                    Err(Error::ResponseError(ResponseContent {
+                        status: response_content.status,
+                        content: response_content.content,
+                        entity: None,
+                    }))
+                }
+                StatusCode::FORBIDDEN => {
+                    error!("Forbidden to delete project with ID: {}", project_id);
+                    Err(Error::ResponseError(ResponseContent {
+                        status: response_content.status,
+                        content: response_content.content,
+                        entity: None,
+                    }))
+                }
+                _ => {
+                    error!(
+                        "Received unexpected status code: {}",
+                        response_content.status
+                    );
+                    let unknown_data =
+                        match serde_json::from_str::<Value>(&response_content.content) {
+                            Ok(val) => val,
+                            Err(deserialize_err) => {
+                                error!(
+                                    "Failed to deserialize unknown response content: {}",
+                                    deserialize_err
+                                );
+                                return Err(Error::Serde(deserialize_err));
+                            }
+                        };
+                    Err(Error::ResponseError(ResponseContent {
+                        status: response_content.status,
+                        content: response_content.content,
+                        entity: Some(
+                            DeleteManagementCattleIoV3NamespacedProjectError::UnknownValue(
+                                unknown_data,
+                            ),
+                        ),
+                    }))
+                }
             }
-        },
+        }
     }
 }
-
 
 #[derive(Serialize, Deserialize, SerdeDiff, Debug, Clone, PartialEq)]
 pub struct Project {
@@ -584,8 +743,12 @@ impl TryFrom<IoCattleManagementv3Project> for Project {
     type Error = ConversionError;
 
     fn try_from(value: IoCattleManagementv3Project) -> Result<Self, Self::Error> {
-        let metadata = value.metadata.ok_or(ConversionError::MissingField("metadata".into()))?;
-        let spec = value.spec.ok_or(ConversionError::MissingField("spec".into()))?;
+        let metadata = value
+            .metadata
+            .ok_or(ConversionError::MissingField("metadata".into()))?;
+        let spec = value
+            .spec
+            .ok_or(ConversionError::MissingField("spec".into()))?;
 
         // let container_default_resource_limit = spec
         //     .container_default_resource_limit
@@ -801,7 +964,6 @@ pub fn show_project_diff(project_a: &Project, project_b: &IoCattleManagementv3Pr
         project_b.metadata.as_ref().and_then(|m| m.labels.as_ref()),
     );
 }
-
 
 #[cfg(test)]
 mod tests {

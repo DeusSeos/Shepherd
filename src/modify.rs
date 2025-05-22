@@ -1,4 +1,4 @@
-use crate::{poll_project_ready, poll_role_template_ready, retry_async, RoleTemplate};
+use crate::{poll_project_ready, poll_role_template_ready, prtb, retry_async, RoleTemplate};
 use crate::diff::compute_cluster_diff;
 use crate::models::{ConversionError, CreatedObject, MinimalObject};
 use crate::project::{create_project, delete_project, update_project};
@@ -14,7 +14,7 @@ use rancher_client::models::{IoCattleManagementv3Project, IoCattleManagementv3Pr
 use reqwest::StatusCode;
 
 use futures::{stream, FutureExt, StreamExt};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace, warn};
 
 
 use crate::project::Project;
@@ -136,7 +136,7 @@ pub async fn delete_objects(
     for (object_type, minimal_object) in deleted_files {
         match delete_object(&configuration, &object_type, &minimal_object).await {
             Ok(object) => {
-                info!("Deleted object: {:#?}", minimal_object);
+                trace!("Deleted object: {:#?}", minimal_object);
                 results.push(Ok(object))
             },
             Err(e) => { 
@@ -172,14 +172,38 @@ async fn delete_object(
             info!("Deleting project `{}` from cluster `{}`", minimal_object.object_id.as_ref().unwrap(), cluster_id);
             let object = delete_project(configuration, cluster_id, minimal_object.object_id.as_ref().unwrap().as_ref()).await;
             match object {
-                Ok(object) => { 
-                    info!("Deleted project `{}` ({}) from cluster `{}`", minimal_object.object_id.as_ref().unwrap(), object.spec.as_ref().unwrap().display_name, cluster_id); 
-                    Ok(CreatedObject::Project(object))
-            }
-                ,
                 Err(e) => {
                     error!("Failed to delete project `{}` from cluster `{}`: {}", minimal_object.object_id.as_ref().unwrap(), cluster_id, e);
-                    Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>)}
+                    Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                },
+                // Successfully made the API call, now check the inner result
+                Ok(delete_result) => match delete_result {
+                    // Project existed and was deleted successfully
+                    Ok(project) => {
+                        info!("Successfully deleted project: {}", 
+                            project.metadata.as_ref()
+                                .and_then(|m| m.name.as_ref())
+                                .unwrap_or(&"unknown".to_string()));
+                        
+                        // Return the deleted project or do something with it
+                        Ok(CreatedObject::Project(project))
+                    },
+                    
+                    // Project not found or other status returned
+                    Err(status) => {
+                        if status.code.unwrap_or(200) == 404 {
+                            warn!("Project {} not found or already deleted", minimal_object.object_id.as_ref().unwrap());
+                            // Handle not found case
+                        } else {
+                            warn!("Deletion returned status: {:?}", status);
+                            // Handle other status cases
+                        }
+                        
+                        // You might want to return the status or convert it to your app's error type
+                        Ok(CreatedObject::Status(status))
+                    }
+                }
+
             }
         }
 
@@ -195,7 +219,7 @@ async fn delete_object(
             match object {
                 Ok(object) => {
                     info!("Deleted role-template `{}`", minimal_object.object_id.as_ref().unwrap());
-                    Ok(CreatedObject::RoleTemplate(object))},
+                    Ok(CreatedObject::Status(object))},
                 Err(e) => {
                     error!("Failed to delete role-template `{}`: {}", minimal_object.object_id.as_ref().unwrap(), e);
                     Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
@@ -209,7 +233,7 @@ async fn delete_object(
             match object {
                 Ok(object) => {
                     info!("Deleted prtb `{}` from cluster `{}`", minimal_object.object_id.as_ref().unwrap(), cluster_id);
-                    Ok(CreatedObject::ProjectRoleTemplateBinding(object))
+                    Ok(CreatedObject::Status(object))
                 },
                 Err(e) => {
                     error!("Failed to delete prtb `{}` from cluster `{}`: {}", minimal_object.object_id.as_ref().unwrap(), cluster_id, e);
@@ -310,54 +334,7 @@ pub async fn create_objects(
                 }));
             }
             ObjectType::ProjectRoleTemplateBinding => {
-                handles_prtbs.push(tokio::spawn(async move {
-                    info!("Creating prtb from file: {}", file_path.display());
-                    let prtb = load_object::<ProjectRoleTemplateBinding>(&file_path, &format).await?;
-                    let display_name = prtb.id.clone();
-                    let mut rancher_prtb = IoCattleManagementv3ProjectRoleTemplateBinding::try_from(prtb)?;
-                    let project_id = rancher_prtb
-                        .metadata
-                        .as_ref()
-                        .and_then(|m| m.namespace.clone())
-                        .ok_or("Missing namespace in metadata")?;
-
-                    if rancher_prtb.metadata.is_none() || rancher_prtb.metadata.as_ref().unwrap().name.is_none() {
-                        let mut metadata = rancher_prtb.metadata.unwrap_or(IoK8sApimachineryPkgApisMetaV1ObjectMeta::default());
-                        metadata.generate_name = Some("prtb-".to_string());
-                        rancher_prtb.metadata = Some(metadata);
-                    }
-
-                    const MAX_RETRIES: usize = 5;
-                    const RETRY_DELAY: Duration = Duration::from_millis(200);
-
-                    let result = retry_async(
-                        "create_project_role_template_binding",
-                        MAX_RETRIES,
-                        RETRY_DELAY,
-                        || {
-                            let config = config.clone();
-                            let rancher_prtb = rancher_prtb.clone();
-                            let project_id = project_id.clone();
-                            async move {
-                                create_project_role_template_binding(&config, &project_id, rancher_prtb.clone()).await
-                            }
-                        },
-                        |err| matches!(
-                            err,
-                            Error::ResponseError(resp)
-                            if resp.status == StatusCode::NOT_FOUND || resp.status == StatusCode::INTERNAL_SERVER_ERROR
-                        ),
-                    )
-                    .await;
-
-                    match result {
-                        Ok(created) => {
-                            info!("Created PRTB: {}", display_name);
-                            Ok((file_path, CreatedObject::ProjectRoleTemplateBinding(created)))
-                        }
-                        Err(e) => Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
-                    }
-                }));
+                handles_prtbs.push(file_path);
             }
             _ => unreachable!(),
         }
@@ -435,6 +412,62 @@ pub async fn create_objects(
     // Now append `polled_projects` to the final results
     results.extend(polled_projects);
 
-    results.extend(await_handles(handles_prtbs).await);
+
+    let mut prtb_handles = Vec::with_capacity(handles_prtbs.len());
+
+    for file_path in handles_prtbs {
+        let config = configuration.clone();
+        let format = file_format.clone();
+        prtb_handles.push(tokio::spawn(async move {
+                    info!("Creating prtb from file: {}", file_path.display());
+                    let prtb = load_object::<ProjectRoleTemplateBinding>(&file_path, &format).await?;
+                    let display_name = prtb.id.clone();
+                    let mut rancher_prtb = IoCattleManagementv3ProjectRoleTemplateBinding::try_from(prtb)?;
+                    let project_id = rancher_prtb
+                        .metadata
+                        .as_ref()
+                        .and_then(|m| m.namespace.clone())
+                        .ok_or("Missing namespace in metadata")?;
+
+                    if rancher_prtb.metadata.is_none() || rancher_prtb.metadata.as_ref().unwrap().name.is_none() {
+                        let mut metadata = rancher_prtb.metadata.unwrap_or(IoK8sApimachineryPkgApisMetaV1ObjectMeta::default());
+                        metadata.generate_name = Some("prtb-".to_string());
+                        rancher_prtb.metadata = Some(metadata);
+                    }
+
+                    const MAX_RETRIES: usize = 5;
+                    const RETRY_DELAY: Duration = Duration::from_millis(200);
+
+                    let result = retry_async(
+                        "create_project_role_template_binding",
+                        MAX_RETRIES,
+                        RETRY_DELAY,
+                        || {
+                            let config = config.clone();
+                            let rancher_prtb = rancher_prtb.clone();
+                            let project_id = project_id.clone();
+                            async move {
+                                create_project_role_template_binding(&config, &project_id, rancher_prtb.clone()).await
+                            }
+                        },
+                        |err| matches!(
+                            err,
+                            Error::ResponseError(resp)
+                            if resp.status == StatusCode::NOT_FOUND || resp.status == StatusCode::INTERNAL_SERVER_ERROR
+                        ),
+                    )
+                    .await;
+
+                    match result {
+                        Ok(created) => {
+                            info!("Created PRTB: {}", display_name);
+                            Ok((file_path, CreatedObject::ProjectRoleTemplateBinding(created)))
+                        }
+                        Err(e) => Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
+                    }
+                }));
+    }
+
+    results.extend(await_handles(prtb_handles).await);
     results
 }

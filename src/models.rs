@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use rancher_client::models::{IoCattleManagementv3Project, IoCattleManagementv3ProjectRoleTemplateBinding, IoCattleManagementv3RoleTemplate};
+use rancher_client::models::{IoCattleManagementv3Project, IoCattleManagementv3ProjectRoleTemplateBinding, IoCattleManagementv3RoleTemplate, IoK8sApimachineryPkgApisMetaV1Status};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -210,6 +210,7 @@ pub enum ObjectType {
 
 pub enum CreatedObject {
     // Cluster(Cluster),
+    Status(IoK8sApimachineryPkgApisMetaV1Status),
     Project(IoCattleManagementv3Project),
     RoleTemplate(IoCattleManagementv3RoleTemplate),
     ProjectRoleTemplateBinding(IoCattleManagementv3ProjectRoleTemplateBinding),

@@ -120,6 +120,9 @@ pub async fn write_back_objects(
                         },
                     );
                 }
+                _ => {
+                    unimplemented!("Writing back object type not implemented")
+                }
             }
             Ok(())
         });
