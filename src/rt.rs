@@ -18,6 +18,7 @@ use rancher_client::{
     },
 };
 use serde_json::Value;
+use tracing::{error, info, warn};
 
 use crate::models::ConversionError;
 
@@ -48,44 +49,69 @@ pub async fn delete_role_template(
     let result = delete_management_cattle_io_v3_role_template(  
         configuration,  
         role_template_id,  
+        None, // pretty
+        None, // dry_run  
         None, // grace_period_seconds  
         None, // orphan_dependents  
         None, // propagation_policy  
-        None, // dry_run  
         None, // body  
-        None, // pretty
     )  
     .await;  
   
     match result {  
-        Err(e) => Err(e),  
         Ok(response_content) => {  
-            // Match on the status code and deserialize accordingly  
             match response_content.status {  
                 StatusCode::OK => {  
+                    info!("Successfully deleted the role template with ID: {}", role_template_id);
                     // Try to deserialize the content into IoCattleManagementv3RoleTemplate (Status200 case)  
                     match serde_json::from_str(&response_content.content) {  
                         Ok(data) => Ok(data),  
-                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),  
+                        Err(deserialize_err) => {  
+                            error!("Failed to deserialize the response: {}", deserialize_err);
+                            Err(Error::Serde(deserialize_err))  
+                        },  
                     }  
-                }  
+                },  
+                StatusCode::NOT_FOUND => {  
+                    error!("The role template with ID: {} was not found", role_template_id);
+                    Err(Error::ResponseError(ResponseContent {
+                        status: response_content.status,
+                        content: response_content.content,
+                        entity: None,
+                    }))
+                },  
+                StatusCode::FORBIDDEN => {  
+                    error!("You do not have permission to delete the role template with ID: {}", role_template_id);
+                    Err(Error::ResponseError(ResponseContent {
+                        status: response_content.status,
+                        content: response_content.content,
+                        entity: None,
+                    }))
+                },  
                 _ => {  
                     // If not status 200, treat as UnknownValue  
                     match serde_json::from_str::<serde_json::Value>(&response_content.content) {  
-                        Ok(unknown_data) => Err(Error::ResponseError(ResponseContent {  
-                            status: response_content.status,  
-                            content: response_content.content,  
-                            entity: Some(  
-                                DeleteManagementCattleIoV3RoleTemplateError::UnknownValue(  
-                                    unknown_data,  
-                                ),  
-                            ),  
-                        })),  
-                        Err(unknown_deserialize_err) => Err(Error::Serde(unknown_deserialize_err)),  
+                        Ok(unknown_data) => {  
+                            error!("Failed to delete the role template with ID: {}. Received unknown error: {:#?}", role_template_id, unknown_data);
+                            Err(Error::ResponseError(ResponseContent {
+                                status: response_content.status,
+                                content: response_content.content,
+                                entity: Some(
+                                    DeleteManagementCattleIoV3RoleTemplateError::UnknownValue(
+                                        unknown_data,
+                                    ),
+                                ),
+                            }))
+                        },  
+                        Err(unknown_deserialize_err) => {  
+                            error!("Failed to deserialize the response: {}", unknown_deserialize_err);
+                            Err(Error::Serde(unknown_deserialize_err))  
+                        },  
                     }  
                 }  
             }  
-        }  
+        },  
+        Err(e) => Err(e),  
     }  
 }
 
@@ -132,24 +158,45 @@ pub async fn get_role_templates(
 
     match result {
         Err(e) => {
-            // TODO: Handle specific error cases
+            error!("Failed to get all role templates from the cluster: {}", e);
             Err(e)
         },
         Ok(response_content) => {
-            // Match on the status code and deserialize accordingly
             match response_content.status {
                 StatusCode::OK => {
                     // Try to deserialize the content into IoCattleManagementv3RoleTemplateList (Status200 case)
                     match serde_json::from_str(&response_content.content) {
-                        Ok(data) => Ok(data),
-                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
+                        Ok(data) => {
+                            info!("Successfully retrieved the list of role templates from the cluster");
+                            Ok(data)
+                        },
+                        Err(deserialize_err) => {
+                            error!("Failed to deserialize the response: {}", deserialize_err);
+                            Err(Error::Serde(deserialize_err))
+                        }
                     }
-                }
+                },
+                StatusCode::NOT_FOUND => {
+                    warn!("Failed to find any role templates in the cluster");
+                    Err(Error::ResponseError(ResponseContent {
+                        status: response_content.status,
+                        content: response_content.content,
+                        entity: None
+                    }))
+                },
+                StatusCode::FORBIDDEN => {
+                    error!("You do not have permission to get all role templates from the cluster");
+                    Err(Error::ResponseError(ResponseContent {
+                        status: response_content.status,
+                        content: response_content.content,
+                        entity: None
+                    }))
+                },
                 _ => {
                     // If not status 200, treat as UnknownValue
                     match serde_json::from_str::<serde_json::Value>(&response_content.content) {
                         Ok(unknown_data) => {
-                            // Handle the unknown response
+                            error!("Failed to get all role templates from the cluster. Received unknown error: {:#?}", unknown_data);
                             Err(Error::ResponseError(ResponseContent {
                                 status: response_content.status,
                                 content: response_content.content,
@@ -159,8 +206,11 @@ pub async fn get_role_templates(
                                     ),
                                 ),
                             }))
-                        }
-                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
+                        },
+                        Err(unknown_deserialize_err) => {
+                            error!("Failed to deserialize the response: {}", unknown_deserialize_err);
+                            Err(Error::Serde(unknown_deserialize_err))
+                        },
                     }
                 }
             }
@@ -182,51 +232,82 @@ pub async fn update_role_template(configuration: &Configuration,
 
     let result = patch_management_cattle_io_v3_role_template(configuration, rt_id, Some(k8s_patch), None, None, None, None, None).await;
     match result {
-        Err(e) => Err(e),
+        Err(e) => {
+            error!("Failed to update role template with ID: {}. Received error: {}", rt_id, e);
+            Err(e)
+        }
         Ok(response_content) => {
-            // Match on the status code and deserialize accordingly
             match response_content.status {
                 StatusCode::OK => {
+                    info!("Successfully updated the role template with ID: {}", rt_id);
                     // Try to deserialize the content into IoCattleManagementv3RoleTemplate (Status200 case)
                     match serde_json::from_str(&response_content.content) {
                         Ok(entity) => Ok(entity),
-                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
+                        Err(deserialize_err) => {
+                            error!("Failed to deserialize the response: {}", deserialize_err);
+                            Err(Error::Serde(deserialize_err))
+                        },
                     }
                 },
                 StatusCode::NOT_FOUND => {
-                    // Try to deserialize the content into IoCattleManagementv3RoleTemplate (NotFound case)
-                    match serde_json::from_str(&response_content.content) {
-                        Ok(entity) => Ok(entity),
-                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
-                    }
+                    error!("The role template with ID: {} was not found", rt_id);
+                    Err(Error::ResponseError(ResponseContent {
+                        status: response_content.status,
+                        content: response_content.content,
+                        entity: None,
+                    }))
                 },
                 StatusCode::BAD_REQUEST => {
-                    // Try to deserialize the content into IoCattleManagementv3RoleTemplate (BadRequest case)
-                    match serde_json::from_str(&response_content.content) {
-                        Ok(entity) => Ok(entity),
-                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
-                    }
+                    error!("The request was invalid. Please check the request body and try again. The request body was: {}", response_content.content);
+                    Err(Error::ResponseError(ResponseContent {
+                        status: response_content.status,
+                        content: response_content.content,
+                        entity: None,
+                    }))
                 },
                 StatusCode::NOT_IMPLEMENTED => {
-                    // Try to deserialize the content into IoCattleManagementv3RoleTemplate (NotImplemented case)
-                    match serde_json::from_str(&response_content.content) {
-                        Ok(entity) => Ok(entity),
-                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
-                    }
-                }
+                    error!("The request was not implemented. Please check the request body and try again. The request body was: {}", response_content.content);
+                    Err(Error::ResponseError(ResponseContent {
+                        status: response_content.status,
+                        content: response_content.content,
+                        entity: None,
+                    }))
+                },
+                StatusCode::UNAUTHORIZED => {
+                    error!("You do not have permission to update the role template with ID: {}", rt_id);
+                    Err(Error::ResponseError(ResponseContent {
+                        status: response_content.status,
+                        content: response_content.content,
+                        entity: None,
+                    }))
+                },
+                StatusCode::INTERNAL_SERVER_ERROR => {
+                    error!("The server encountered an error while trying to update the role template with ID: {}. Please try again later", rt_id);
+                    Err(Error::ResponseError(ResponseContent {
+                        status: response_content.status,
+                        content: response_content.content,
+                        entity: None,
+                    }))
+                },
                 _ => {
                     // If not status 200, treat as UnknownValue
                     match serde_json::from_str::<serde_json::Value>(&response_content.content) {
-                        Ok(unknown_data) => Err(Error::ResponseError(ResponseContent {
-                            status: response_content.status,
-                            content: response_content.content,
-                            entity: Some(
-                                PatchManagementCattleIoV3RoleTemplateError::UnknownValue(
-                                    unknown_data,
+                        Ok(unknown_data) => {
+                            error!("Failed to update the role template with ID: {}. Received unknown error: {:#?}", rt_id, unknown_data);
+                            Err(Error::ResponseError(ResponseContent {
+                                status: response_content.status,
+                                content: response_content.content,
+                                entity: Some(
+                                    PatchManagementCattleIoV3RoleTemplateError::UnknownValue(
+                                        unknown_data,
+                                    ),
                                 ),
-                            ),
-                        })),
-                        Err(unknown_deserialize_err) => Err(Error::Serde(unknown_deserialize_err)),
+                            }))
+                        },
+                        Err(unknown_deserialize_err) => {
+                            error!("Failed to deserialize the response: {}", unknown_deserialize_err);
+                            Err(Error::Serde(unknown_deserialize_err))
+                        },
                     }
                 }
             }
@@ -311,8 +392,30 @@ pub async fn create_role_template(configuration: &Configuration, body: IoCattleM
         Ok(response_content) => {
             match response_content.status {
                 StatusCode::OK | StatusCode::CREATED => {
+                    info!("Successfully created role template");
                     serde_json::from_str(&response_content.content)
                         .map_err(Error::Serde)
+                }
+                StatusCode::CONFLICT => {
+                    warn!("Failed to create role template, conflict occurred");
+                    match serde_json::from_str::<serde_json::Value>(&response_content.content) {
+                        Ok(conflict_value) => Err(Error::ResponseError(ResponseContent {
+                            status: response_content.status,
+                            content: response_content.content,
+                            entity: Some(CreateManagementCattleIoV3RoleTemplateError::UnknownValue(
+                                conflict_value,
+                            )),
+                        })),
+                        Err(e) => Err(Error::Serde(e)),
+                    }
+                }
+                StatusCode::FORBIDDEN => {
+                    error!("You do not have permission to create the role template");
+                    Err(Error::ResponseError(ResponseContent {
+                        status: response_content.status,
+                        content: response_content.content,
+                        entity: None,
+                    }))
                 }
                 _ => {
                     // Unexpected success status
@@ -329,26 +432,10 @@ pub async fn create_role_template(configuration: &Configuration, body: IoCattleM
             }
         }
 
-        Err(Error::ResponseError(resp)) => {
-            if resp.status == StatusCode::CONFLICT {
-                // Deserialize conflict info and return it as a structured error
-                match serde_json::from_str::<serde_json::Value>(&resp.content) {
-                    Ok(conflict_value) => Err(Error::ResponseError(ResponseContent {
-                        status: resp.status,
-                        content: resp.content,
-                        entity: Some(CreateManagementCattleIoV3RoleTemplateError::UnknownValue(
-                            conflict_value,
-                        )),
-                    })),
-                    Err(e) => Err(Error::Serde(e)),
-                }
-            } else {
-                // Pass through all other response errors
-                Err(Error::ResponseError(resp))
-            }
+        Err(err) => {
+            error!("Failed to create role template: {}", err);
+            Err(err)
         }
-
-        Err(err) => Err(err), // Reqwest, Serde, IO, etc.
     }
 
 

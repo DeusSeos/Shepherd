@@ -321,6 +321,7 @@ pub async fn load_configuration(
         bail!("Cluster file does not exist: {:?}", cluster_file);
     }
 
+    info!("Loading cluster configuration from file: {:?}", cluster_file);
     let cluster_file_content = read_to_string(&cluster_file)
         .await
         .with_context(|| format!("Failed to read cluster file: {:?}", cluster_file))?;
@@ -360,16 +361,16 @@ pub async fn load_configuration(
         if entry.file_type().await?.is_dir() {
             let project_folder_path = entry.path();
             let project_id = entry.file_name().to_string_lossy().to_string();
-            
+
             // Look for project file with new naming convention
             let project_file = project_folder_path.join(format!("{}.project.{}", project_id, extension));
-            
             if project_file.exists() {
+                info!("Loading project configuration from file: {:?}", project_file);
                 let content = read_to_string(&project_file).await
                     .with_context(|| format!("Failed to read project file: {:?}", project_file))?;
                 let project: Project = deserialize_object(&content, file_format)
                     .with_context(|| format!("Failed to deserialize project file: {:?}", project_file))?;
-                
+
                 // Read PRTBs
                 let mut prtbs = Vec::new();
                 let mut prd = read_dir(&project_folder_path).await?;
@@ -386,7 +387,7 @@ pub async fn load_configuration(
                         }
                     }
                 }
-                
+
                 cluster_config.projects.insert(project_id, (project, prtbs));
             } else {
                 warn!("Project file not found: {:?}", project_file);
@@ -396,137 +397,6 @@ pub async fn load_configuration(
 
     Ok(Some(cluster_config))
 }
-
-
-// async fn load_configuration(
-//     path: &Path,
-//     endpoint_url: &str,
-//     cluster_id: &str,
-//     file_format: &FileFormat,
-// ) -> Result<Option<ClusterConfig>> {
-//     let endpoint_path = path.join(endpoint_url.replace("https://", "").replace("/", "_"));
-//     if !endpoint_path.exists() {
-//         bail!("Configuration path does not exist: {:?}", endpoint_path);
-//     }
-
-//     let cluster_folder_path = endpoint_path.join(cluster_id);
-//     if !cluster_folder_path.exists() {
-//         bail!("Cluster path does not exist: {:?}", cluster_folder_path);
-//     }
-
-//     let cluster_file = cluster_folder_path.join(format!(
-//         "{}.{}",
-//         cluster_id,
-//         file_extension_from_format(file_format)
-//     ));
-//     if !cluster_file.exists() {
-//         bail!("Cluster file does not exist: {:?}", cluster_file);
-//     }
-
-//     let cluster_file_content = read_to_string(&cluster_file)
-//         .await
-//         .with_context(|| format!("Failed to read cluster file: {:?}", cluster_file))?;
-//     let cluster: Cluster = deserialize_object(&cluster_file_content, file_format)
-//         .with_context(|| format!("Failed to deserialize cluster file: {:?}", cluster_file))?;
-
-//     let mut cluster_config = ClusterConfig {
-//         cluster: cluster.clone(),
-//         role_templates: Vec::new(),
-//         projects: std::collections::HashMap::new(),
-//     };
-
-//     // Read role templates
-//     let role_template_path = endpoint_path.join("roles");
-//     if !role_template_path.exists() {
-//         bail!("Role template path does not exist: {:?}", role_template_path);
-//     }
-
-//     let mut role_templates = Vec::new();
-//     let mut rd = read_dir(&role_template_path).await?;
-//     while let Some(entry) = rd.next_entry().await? {
-//         if entry.file_type().await?.is_file() {
-//             let content = read_to_string(entry.path()).await?;
-//             let role_template: RoleTemplate = deserialize_object(&content, file_format)?;
-//             role_templates.push(role_template);
-//         }
-//     }
-//     cluster_config.role_templates = role_templates;
-
-//  // Read projects
-//     let mut rd = read_dir(&cluster_folder_path).await?;
-//     while let Some(entry) = rd.next_entry().await? {
-//         if entry.file_type().await?.is_dir() {
-//             let project_folder_path = entry.path();
-//             let project_id = project_folder_path.file_name().unwrap().to_str().unwrap().to_string();
-            
-//             // List all files in the project directory
-//             let mut files = Vec::new();
-//             let mut prd = read_dir(&project_folder_path).await?;
-//             while let Some(file_entry) = prd.next_entry().await? {
-//                 if file_entry.file_type().await?.is_file() {
-//                     files.push(file_entry.path());
-//                 }
-//             }
-            
-//             // Try to find the project file - usually there's only one file that's not a PRTB
-//             let mut project_file = None;
-//             let extension = file_extension_from_format(file_format);
-            
-//             for file in &files {
-//                 let file_name = file.file_name().unwrap().to_str().unwrap();
-//                 // Skip files that look like PRTBs (usually start with "prtb-")
-//                 if !file_name.starts_with("prtb-") && file_name.ends_with(&extension) {
-//                     project_file = Some(file.clone());
-//                     break;
-//                 }
-//             }
-            
-//             if let Some(project_file) = project_file {
-//                 // Read and deserialize the project file
-//                 let content = read_to_string(&project_file).await
-//                     .with_context(|| format!("Failed to read project file: {:?}", project_file))?;
-                
-//                 // Try to deserialize as a Project
-//                 match deserialize_object::<Project>(&content, file_format) {
-//                     Ok(project) => {
-//                         // Process PRTBs
-//                         let mut prtbs = Vec::new();
-//                         for file in &files {
-//                             if file != &project_file {
-//                                 let file_name = file.file_name().unwrap().to_str().unwrap();
-//                                 if file_name.starts_with("prtb-") && file_name.ends_with(&extension) {
-//                                     let prtb_content = read_to_string(file).await
-//                                         .with_context(|| format!("Failed to read PRTB file: {:?}", file))?;
-                                    
-//                                     match deserialize_object::<ProjectRoleTemplateBinding>(&prtb_content, file_format) {
-//                                         Ok(prtb) => prtbs.push(prtb),
-//                                         Err(e) => {
-//                                             // Log error but continue processing other files
-//                                             error!("Failed to deserialize PRTB file {:?}: {}", file, e);
-//                                         }
-//                                     }
-//                                 }
-//                             }
-//                         }
-                        
-//                         // Add project and its PRTBs to the cluster configuration
-//                         cluster_config.projects.insert(project_id, (project, prtbs));
-//                     },
-//                     Err(e) => {
-//                         // Log error but continue processing other project directories
-//                         error!("Failed to deserialize project file {:?}: {}", project_file, e);
-//                     }
-//                 }
-//             } else {
-//                 // Log warning but continue processing other project directories
-//                 warn!("No project configuration file found in folder: {:?}", project_folder_path);
-//             }
-//         }
-//     }
-
-//     Ok(Some(cluster_config))
-// }
-
 
 
 /// Recursively remove fields from a JSON Value based on a list of dot-separated paths.

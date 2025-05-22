@@ -272,14 +272,17 @@ pub async fn create_objects(
         match object_type {
             ObjectType::RoleTemplate => {
                 handles_role_templates.push(tokio::spawn(async move {
+                    info!("Creating role-template from file: {}", file_path.display());
                     let role_template = load_object::<RoleTemplate>(&file_path, &format).await?;
                     let rancher_rt = IoCattleManagementv3RoleTemplate::try_from(role_template)?;
                     let created = create_role_template(&config, rancher_rt).await?;
+                    info!("Created role-template: {}", created.metadata.as_ref().unwrap().name.as_ref().unwrap());
                     Ok((file_path, CreatedObject::RoleTemplate(created)))
                 }));
             }
             ObjectType::Project => {
                 handles_projects.push(tokio::spawn(async move {
+                    info!("Creating project from file: {}", file_path.display());
                     let project = load_object::<Project>(&file_path, &format).await?;
                     let mut rancher_p = IoCattleManagementv3Project::try_from(project)?;
                     let cluster_name = rancher_p
@@ -293,7 +296,6 @@ pub async fn create_objects(
                         let mut metadata = rancher_p.metadata.unwrap_or(IoK8sApimachineryPkgApisMetaV1ObjectMeta::default());
                         metadata.generate_name = Some("p-".to_string());
                         rancher_p.metadata = Some(metadata);
-                        
                     }
                     let created = create_project(&config, &cluster_name, rancher_p).await?;
                     let display_name = created
@@ -309,6 +311,7 @@ pub async fn create_objects(
             }
             ObjectType::ProjectRoleTemplateBinding => {
                 handles_prtbs.push(tokio::spawn(async move {
+                    info!("Creating prtb from file: {}", file_path.display());
                     let prtb = load_object::<ProjectRoleTemplateBinding>(&file_path, &format).await?;
                     let display_name = prtb.id.clone();
                     let mut rancher_prtb = IoCattleManagementv3ProjectRoleTemplateBinding::try_from(prtb)?;
@@ -367,9 +370,13 @@ pub async fn create_objects(
             Ok((path, CreatedObject::RoleTemplate(rt))) => {
                 let configuration = configuration.clone();
                 let fut = async move {
+                    info!("Polling role-template {} for readiness", rt.metadata.as_ref().unwrap().name.as_ref().unwrap());
                     let poll_result = poll_role_template_ready(configuration, &rt).await;
                     match poll_result {
-                        Ok(_) => Ok((path, CreatedObject::RoleTemplate(rt))),
+                        Ok(_) => {
+                            info!("Role-template {} is ready", rt.metadata.as_ref().unwrap().name.as_ref().unwrap());
+                            Ok((path, CreatedObject::RoleTemplate(rt)))
+                        }
                         Err(e) => Err(e),
                     }
                 };
@@ -399,9 +406,13 @@ pub async fn create_objects(
             Ok((path, CreatedObject::Project(p))) => {
                 let configuration = configuration.clone();
                 let fut = async move {
+                    info!("Polling project {} for readiness", p.metadata.as_ref().unwrap().name.as_ref().unwrap());
                     let poll_result = poll_project_ready(configuration, &p).await;
                     match poll_result {
-                        Ok(_) => Ok((path, CreatedObject::Project(p))),
+                        Ok(_) => {
+                            info!("Project {} is ready", p.metadata.as_ref().unwrap().name.as_ref().unwrap());
+                            Ok((path, CreatedObject::Project(p)))
+                        }
                         Err(e) => Err(e),
                     }
                 };

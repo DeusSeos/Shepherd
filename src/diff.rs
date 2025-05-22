@@ -4,6 +4,7 @@ use json_patch::diff;
 use rancher_client::models::{IoCattleManagementv3Project, IoCattleManagementv3ProjectRoleTemplateBinding, IoCattleManagementv3RoleTemplate};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
+use tracing::debug;
 
 use crate::{clean_up_value, config::RancherClusterConfig, project::PROJECT_EXCLUDE_PATHS, prtb::PRTB_EXCLUDE_PATHS, rt::RT_EXCLUDE_PATHS, models::ObjectType};
 
@@ -19,57 +20,48 @@ pub fn compute_cluster_diff(
     desired_state: &Value,
 ) -> HashMap< (ObjectType, String, Option<String>), Value> {
 
-    // create a new rancher cluster object
-    // convert to RancherClusterConfig
-
     let current_state: RancherClusterConfig = serde_json::from_value(current_state.clone()).unwrap();
-
     let desired_state: RancherClusterConfig = serde_json::from_value(desired_state.clone()).unwrap();
 
-    // let cluster = current_state.cluster.clone();
-    // create a new role template object
     let c_role_template = current_state.role_templates.clone();
-    // create a new project object
     let c_project = current_state.projects.clone();
 
     let mut patches: HashMap<(ObjectType, String, Option<String>), Value> = HashMap::new();
 
-    // loop through the role templates and compare them
     for crt in &c_role_template {
-        // check if the role template exists in the desired state
         if let Some(desired_rt) = desired_state
             .role_templates
             .iter()
             .find(|drole_template| drole_template.metadata.as_ref().unwrap().name == crt.metadata.as_ref().unwrap().name) {
-            // compute the diff between the current state and the desired state
-            // convert the current state to a JSON value
+
             let mut crtv = serde_json::to_value(crt).unwrap();
             let mut drtv = serde_json::to_value(desired_rt).unwrap();
             clean_up_value(&mut crtv, RT_EXCLUDE_PATHS);
             clean_up_value(&mut drtv, RT_EXCLUDE_PATHS);
             let patch = create_json_patch::<IoCattleManagementv3RoleTemplate>(&crtv, &drtv);
             let rt_id = crt.metadata.as_ref().unwrap().name.clone().unwrap();
-            if let Some(patch) = patch { patches.insert((ObjectType::RoleTemplate, rt_id, None), patch); }
+            if let Some(patch) = patch {
+                debug!("RoleTemplate `{}` diff computed and added to patches", rt_id);
+                patches.insert((ObjectType::RoleTemplate, rt_id, None), patch);
+            }
         }
     }
 
-    // loop through the projects and compare them
     for (c_project_id, (c_project, cprtbs)) in &c_project {
-        // check if the project exists in the desired state
         if let Some((d_project, dprtbs)) = desired_state.projects.get(c_project_id) {
 
             let mut cpv = serde_json::to_value(c_project).unwrap();
             let mut dpv = serde_json::to_value(d_project).unwrap();
             clean_up_value(&mut cpv, PROJECT_EXCLUDE_PATHS);
             clean_up_value(&mut dpv, PROJECT_EXCLUDE_PATHS);
-            // TODO: fix conversion from IoCattleManagementv3Project to Value to Project will cause errors bc of fields not matching ie clusterName -> clusterName -> cluster_name
             let patch = create_json_patch::<IoCattleManagementv3Project>(&cpv, &dpv);
             let cluster_id = c_project.metadata.as_ref().unwrap().namespace.clone().unwrap();
-            if let Some(patch) = patch { patches.insert((ObjectType::Project, c_project_id.to_string(), Some(cluster_id.clone())), patch); }
+            if let Some(patch) = patch {
+                patches.insert((ObjectType::Project, c_project_id.to_string(), Some(cluster_id.clone())), patch);
+                debug!("Project `{}` diff computed and added to patches", c_project_id);
+            }
 
-            // loop through the project role template bindings and compare them
             for cprtb in cprtbs {
-                // check if the project role template binding exists in the desired state
                 if let Some(desired_prtb) = dprtbs.iter().find(|dprtb| dprtb.metadata.as_ref().unwrap().name == cprtb.metadata.as_ref().unwrap().name) {
                     let mut cprtbv = serde_json::to_value(cprtb).unwrap();
                     let mut dprtbv = serde_json::to_value(desired_prtb).unwrap();
@@ -77,11 +69,15 @@ pub fn compute_cluster_diff(
                     clean_up_value(&mut dprtbv, PRTB_EXCLUDE_PATHS);
                     let patch = create_json_patch::<IoCattleManagementv3ProjectRoleTemplateBinding>(&cprtbv, &dprtbv);
                     let prtb_id = cprtb.metadata.as_ref().unwrap().name.clone().unwrap();
-                    if let Some(patch) = patch { patches.insert((ObjectType::ProjectRoleTemplateBinding, prtb_id, Some(c_project_id.clone())),patch); }
+                    if let Some(patch) = patch {
+                        debug!("ProjectRoleTemplateBinding `{}` diff computed and added to patches", prtb_id);
+                        patches.insert((ObjectType::ProjectRoleTemplateBinding, prtb_id, Some(c_project_id.clone())), patch);
+                    }
                 }
             }
         }
     }
+    debug!("Total patches computed: {}", patches.len());
     patches
 }
 
@@ -95,6 +91,8 @@ pub fn diff_boxed_hashmap_string_string(
     a: Option<&HashMap<String, String>>,
     b: Option<&HashMap<String, String>>,
 ) {
+    debug!("diff_boxed_hashmap_string_string: a={:#?} b={:#?}", a, b);
+
     // // Treat None as empty map
     // let binding = HashMap::new();
     // let ma = a.unwrap_or(binding);
@@ -104,10 +102,16 @@ pub fn diff_boxed_hashmap_string_string(
     let ma = a.as_ref().unwrap();
     let mb = b.as_ref().unwrap();
 
+    debug!("diff_boxed_hashmap_string_string: ma={:#?} mb={:#?}", ma, mb);
+
     // Collect all keys
     let keys: BTreeSet<_> = ma.keys().chain(mb.keys()).collect();
 
+    debug!("diff_boxed_hashmap_string_string: keys={:#?}", &keys);
+
     for key in keys {
+        debug!("diff_boxed_hashmap_string_string: Comparing key {}", key);
+
         match (ma.get(key), mb.get(key)) {
             (Some(old), Some(new)) if old != new => {
                 println!("Hashmap changed  {}: {:?} → {:?}", key, old, new);

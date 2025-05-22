@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{de::Error as _, Deserialize, Serialize};
 
 use reqwest::StatusCode;
 
@@ -28,6 +28,7 @@ use rancher_client::{
     },
 };
 use serde_json::Value;
+use tracing::{debug, error, info, warn};
 
 use crate::models::ConversionError;
 
@@ -69,6 +70,11 @@ pub async fn get_project_role_template_bindings(
     IoCattleManagementv3ProjectRoleTemplateBindingList,
     Error<ListManagementCattleIoV3ProjectRoleTemplateBindingForAllNamespacesError>,
 > {
+    debug!(
+        "Getting all project role template bindings from the cluster with the following filters: field_selector: {:?}, label_selector: {:?}, limit: {:?}, resource_version: {:?}, resource_version_match: {:?}, continue: {:?}",
+        field_selector, label_selector, limit, resource_version, resource_version_match, continue_,
+    );
+
     let result = list_management_cattle_io_v3_project_role_template_binding_for_all_namespaces(
         configuration,
         None,
@@ -86,34 +92,41 @@ pub async fn get_project_role_template_bindings(
     .await;
     match result {
         Err(e) => {
-            // TODO: Handle specific error cases
+            error!("Failed to get all project role template bindings from the cluster: {}", e);
             Err(e)
         }
         Ok(response_content) => {
-            // Match on the status code and deserialize accordingly
+            debug!("Received a response from the cluster: {:?}", response_content);
             match response_content.status {
                 StatusCode::OK => {
                     // Try to deserialize the content into IoCattleManagementv3ProjectRoleTemplateBindingList (Status200 case)
                     match serde_json::from_str(&response_content.content) {
-                        Ok(data) => Ok(data),
-                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
+                        Ok(data) => {
+                            debug!("Deserialized the response content into IoCattleManagementv3ProjectRoleTemplateBindingList: {:?}", data);
+                            Ok(data)
+                        }
+                        Err(deserialize_err) => {
+                            error!("Failed to deserialize the response content into IoCattleManagementv3ProjectRoleTemplateBindingList: {}", deserialize_err);
+                            Err(Error::Serde(deserialize_err))
+                        }
                     }
                 }
                 _ => {
-                    // If not status 200, treat as UnknownValue
-                    match serde_json::from_str::<serde_json::Value>(&response_content.content) {
-                        Ok(unknown_data) => {
-                            // Handle the unknown response
-                            Err(Error::ResponseError(ResponseContent {
-                                status: response_content.status,
-                                content: response_content.content,
-                                entity: Some(ListManagementCattleIoV3ProjectRoleTemplateBindingForAllNamespacesError::UnknownValue(
-                                    unknown_data,
-                                )),
-                            }))
+                    error!("Received an unexpected status code from the cluster: {}", response_content.status);
+                    let unknown_data = match serde_json::from_str::<serde_json::Value>(&response_content.content) {
+                        Ok(unknown_data) => unknown_data,
+                        Err(deserialize_err) => {
+                            error!("Failed to deserialize the response content into serde_json::Value: {}", deserialize_err);
+                            return Err(Error::Serde(deserialize_err));
                         }
-                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
-                    }
+                    };
+                    Err(Error::ResponseError(ResponseContent {
+                        status: response_content.status,
+                        content: response_content.content,
+                        entity: Some(ListManagementCattleIoV3ProjectRoleTemplateBindingForAllNamespacesError::UnknownValue(
+                            unknown_data,
+                        )),
+                    }))
                 }
             }
         }
@@ -154,6 +167,11 @@ pub async fn get_namespaced_project_role_template_bindings(
     IoCattleManagementv3ProjectRoleTemplateBindingList,
     Error<ListManagementCattleIoV3NamespacedProjectRoleTemplateBindingError>,
 > {
+    debug!(
+        "Fetching project role template bindings for project_id: {}, with filters - field_selector: {:?}, label_selector: {:?}, limit: {:?}, resource_version: {:?}, resource_version_match: {:?}, continue: {:?}",
+        project_id, field_selector, label_selector, limit, resource_version, resource_version_match, continue_
+    );
+
     let result = list_management_cattle_io_v3_namespaced_project_role_template_binding(
         configuration,
         project_id,
@@ -170,26 +188,48 @@ pub async fn get_namespaced_project_role_template_bindings(
         None,
     )
     .await;
+
     match result {
         Err(e) => {
-            // TODO: Handle specific error cases
+            error!("Failed to fetch project role template bindings: {}", e);
             Err(e)
         }
         Ok(response_content) => {
-            // Match on the status code and deserialize accordingly
+            debug!("Received response: {:?}", response_content);
+
             match response_content.status {
                 StatusCode::OK => {
-                    // Try to deserialize the content into IoCattleManagementv3ProjectRoleTemplateBindingList (Status200 case)
                     match serde_json::from_str(&response_content.content) {
-                        Ok(data) => Ok(data),
-                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
+                        Ok(data) => {
+                            debug!("Successfully deserialized response content");
+                            Ok(data)
+                        }
+                        Err(deserialize_err) => {
+                            error!("Deserialization error: {}", deserialize_err);
+                            Err(Error::Serde(deserialize_err))
+                        }
                     }
                 }
+                StatusCode::NOT_FOUND => {
+                    error!("The project role template bindings were not found");
+                    Err(Error::ResponseError(ResponseContent {
+                        status: response_content.status,
+                        content: response_content.content,
+                        entity: None,
+                    }))
+                }
+                StatusCode::UNAUTHORIZED => {
+                    error!("You are not authorized to access the project role template bindings");
+                    Err(Error::ResponseError(ResponseContent {
+                        status: response_content.status,
+                        content: response_content.content,
+                        entity: None,
+                    }))
+                }
                 _ => {
-                    // If not status 200, treat as UnknownValue
                     match serde_json::from_str::<serde_json::Value>(&response_content.content) {
                         Ok(unknown_data) => {
-                            // Handle the unknown response
+                            error!("Received unknown response status: {}", response_content.status);
                             Err(Error::ResponseError(ResponseContent {
                                 status: response_content.status,
                                 content: response_content.content,
@@ -198,7 +238,10 @@ pub async fn get_namespaced_project_role_template_bindings(
                                 )),
                             }))
                         }
-                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
+                        Err(deserialize_err) => {
+                            error!("Deserialization error for unknown response: {}", deserialize_err);
+                            Err(Error::Serde(deserialize_err))
+                        }
                     }
                 }
             }
@@ -216,9 +259,22 @@ pub async fn update_project_role_template_binding(
     IoCattleManagementv3ProjectRoleTemplateBinding,
     Error<PatchManagementCattleIoV3NamespacedProjectRoleTemplateBindingError>,
 > {
+    info!("Patching project role template binding with ID: {} in project: {}", prtb_id, project_id);
+
     let patch_array = match patch_value {
         Value::Array(arr) => arr,
-        _ => panic!("Expected patch to serialize to a JSON array"),
+        Value::Null => {
+            error!("Expected patch to serialize to a JSON array, but got null");
+            return Err(Error::Serde(serde_json::Error::custom(
+                "Expected patch to serialize to a JSON array, but got null",
+            )));
+        }
+        _ => {
+            error!("Expected patch to serialize to a JSON array, but got: {:?}", patch_value);
+            return Err(Error::Serde(serde_json::Error::custom(
+                "Expected patch to serialize to a JSON array",
+            )));
+        }
     };
 
     let k8s_patch = IoK8sApimachineryPkgApisMetaV1Patch::Array(patch_array);
@@ -236,51 +292,75 @@ pub async fn update_project_role_template_binding(
     )
     .await;
     match result {
-        Err(e) => Err(e),
+        Err(e) => {
+            error!("Failed to update project role template binding: {}", e);
+            Err(e)
+        }
         Ok(response_content) => {
-            // Match on the status code and deserialize accordingly
+            debug!("Received response: {:?}", response_content);
             match response_content.status {
                 StatusCode::OK => {
-                    // Try to deserialize the content into IoCattleManagementv3RoleTemplate (Status200 case)
                     match serde_json::from_str(&response_content.content) {
-                        Ok(entity) => Ok(entity),
-                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
+                        Ok(entity) => {
+                            debug!("Successfully deserialized response content");
+                            Ok(entity)
+                        }
+                        Err(deserialize_err) => {
+                            error!("Deserialization error: {}", deserialize_err);
+                            Err(Error::Serde(deserialize_err))
+                        }
                     }
                 }
                 StatusCode::NOT_FOUND => {
-                    // Try to deserialize the content into IoCattleManagementv3RoleTemplate (NotFound case)
-                    match serde_json::from_str(&response_content.content) {
-                        Ok(entity) => Ok(entity),
-                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
-                    }
+                    error!("The project role template binding was not found");
+                    Err(Error::ResponseError(ResponseContent {
+                        status: response_content.status,
+                        content: response_content.content,
+                        entity: None,
+                    }))
+                }
+                StatusCode::UNAUTHORIZED => {
+                    error!("You are not authorized to update the project role template binding");
+                    Err(Error::ResponseError(ResponseContent {
+                        status: response_content.status,
+                        content: response_content.content,
+                        entity: None,
+                    }))
                 }
                 StatusCode::BAD_REQUEST => {
-                    // Try to deserialize the content into IoCattleManagementv3RoleTemplate (BadRequest case)
-                    match serde_json::from_str(&response_content.content) {
-                        Ok(entity) => Ok(entity),
-                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
-                    }
+                    error!("Bad request when updating the project role template binding");
+                    Err(Error::ResponseError(ResponseContent {
+                        status: response_content.status,
+                        content: response_content.content,
+                        entity: None,
+                    }))
                 }
-                StatusCode::NOT_IMPLEMENTED => {
-                    // Try to deserialize the content into IoCattleManagementv3RoleTemplate (NotImplemented case)
-                    match serde_json::from_str(&response_content.content) {
-                        Ok(entity) => Ok(entity),
-                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),
-                    }
+                StatusCode::FORBIDDEN => {
+                    error!("You do not have permission to update the project role template binding");
+                    Err(Error::ResponseError(ResponseContent {
+                        status: response_content.status,
+                        content: response_content.content,
+                        entity: None,
+                    }))
                 }
                 _ => {
-                    // If not status 200, treat as UnknownValue
                     match serde_json::from_str::<serde_json::Value>(&response_content.content) {
-                        Ok(unknown_data) => Err(Error::ResponseError(ResponseContent {
-                            status: response_content.status,
-                            content: response_content.content,
-                            entity: Some(
-                                PatchManagementCattleIoV3NamespacedProjectRoleTemplateBindingError::UnknownValue(
-                                    unknown_data,
+                        Ok(unknown_data) => {
+                            error!("Received unknown response status: {}", response_content.status);
+                            Err(Error::ResponseError(ResponseContent {
+                                status: response_content.status,
+                                content: response_content.content,
+                                entity: Some(
+                                    PatchManagementCattleIoV3NamespacedProjectRoleTemplateBindingError::UnknownValue(
+                                        unknown_data,
+                                    ),
                                 ),
-                            ),
-                        })),
-                        Err(unknown_deserialize_err) => Err(Error::Serde(unknown_deserialize_err)),
+                            }))
+                        }
+                        Err(unknown_deserialize_err) => {
+                            error!("Deserialization error for unknown response: {}", unknown_deserialize_err);
+                            Err(Error::Serde(unknown_deserialize_err))
+                        }
                     }
                 }
             }
@@ -297,26 +377,70 @@ pub async fn update_project_role_template_binding(
 /// * `IoCattleManagementv3ProjectRoleTemplateBinding` - The project role template binding that was created
 /// # Errors
 /// * `Error<CreateManagementCattleIoV3NamespacedProjectRoleTemplateBindingError>` - The error that occurred during the request
-/// 
+///
 pub async fn create_project_role_template_binding(
     configuration: &Configuration,
     project_id: &str,
     body: IoCattleManagementv3ProjectRoleTemplateBinding,
 ) -> Result<IoCattleManagementv3ProjectRoleTemplateBinding, Error<CreateManagementCattleIoV3NamespacedProjectRoleTemplateBindingError>> {
+    info!("Creating project role template binding for project_id: {}", project_id);
 
-    let result = create_management_cattle_io_v3_namespaced_project_role_template_binding(configuration, project_id, body, None, None, Some(crate::FULL_CLIENT_ID), None).await;
+    let result = create_management_cattle_io_v3_namespaced_project_role_template_binding(
+        configuration,
+        project_id,
+        body,
+        None,
+        None,
+        Some(crate::FULL_CLIENT_ID),
+        None,
+    )
+    .await;
 
     match result {
         Ok(response_content) => {
+            debug!("Received response: {:?}", response_content);
+
             match response_content.status {
                 StatusCode::OK | StatusCode::CREATED => {
-                    serde_json::from_str(&response_content.content)
-                        .map_err(Error::Serde)
+                    match serde_json::from_str(&response_content.content) {
+                        Ok(data) => {
+                            info!("Successfully created project role template binding");
+                            Ok(data)
+                        }
+                        Err(deserialize_err) => {
+                            error!("Deserialization error: {}", deserialize_err);
+                            Err(Error::Serde(deserialize_err))
+                        }
+                    }
+                }
+                StatusCode::BAD_REQUEST => {
+                    error!("Bad request when creating project role template binding");
+                    Err(Error::ResponseError(ResponseContent {
+                        status: response_content.status,
+                        content: response_content.content,
+                        entity: None,
+                    }))
+                }
+                StatusCode::FORBIDDEN => {
+                    error!("You do not have permission to create the project role template binding");
+                    Err(Error::ResponseError(ResponseContent {
+                        status: response_content.status,
+                        content: response_content.content,
+                        entity: None,
+                    }))
+                }
+                StatusCode::UNAUTHORIZED => {
+                    error!("You are not authorized to create the project role template binding");
+                    Err(Error::ResponseError(ResponseContent {
+                        status: response_content.status,
+                        content: response_content.content,
+                        entity: None,
+                    }))
                 }
                 _ => {
-                    // Unexpected success status
                     let unknown_value: serde_json::Value =
                         serde_json::from_str(&response_content.content).unwrap_or_default();
+                    error!("Unexpected success status: {}", response_content.status);
                     Err(Error::ResponseError(ResponseContent {
                         status: response_content.status,
                         content: response_content.content,
@@ -330,7 +454,7 @@ pub async fn create_project_role_template_binding(
 
         Err(Error::ResponseError(resp)) => {
             if resp.status == StatusCode::CONFLICT {
-                // Deserialize conflict info and return it as a structured error
+                warn!("Conflict occurred while creating project role template binding");
                 match serde_json::from_str::<serde_json::Value>(&resp.content) {
                     Ok(conflict_value) => Err(Error::ResponseError(ResponseContent {
                         status: resp.status,
@@ -342,12 +466,15 @@ pub async fn create_project_role_template_binding(
                     Err(e) => Err(Error::Serde(e)),
                 }
             } else {
-                // Pass through all other response errors
+                error!("Response error: {}", resp.status);
                 Err(Error::ResponseError(resp))
             }
         }
 
-        Err(err) => Err(err), // Reqwest, Serde, IO, etc.
+        Err(err) => {
+            error!("Request error: {}", err);
+            Err(err)
+        }
     }
 }
 
@@ -380,34 +507,53 @@ pub async fn delete_project_role_template_binding(
     .await;  
   
     match result {  
-        Err(e) => Err(e),  
         Ok(response_content) => {  
-            // Match on the status code and deserialize accordingly  
+            info!("Successfully deleted project role template binding with ID: {}", prtb_id);
             match response_content.status {  
                 StatusCode::OK => {  
                     // Try to deserialize the content into IoCattleManagementv3ProjectRoleTemplateBinding (Status200 case)  
                     match serde_json::from_str(&response_content.content) {  
                         Ok(data) => Ok(data),  
-                        Err(deserialize_err) => Err(Error::Serde(deserialize_err)),  
+                        Err(deserialize_err) => {  
+                            error!("Failed to deserialize response: {}", deserialize_err);
+                            Err(Error::Serde(deserialize_err))  
+                        },  
                     }  
-                }  
+                },  
+                StatusCode::FORBIDDEN => {  
+                    error!("You do not have permission to delete the project role template binding");
+                    Err(Error::ResponseError(ResponseContent {
+                        status: response_content.status,
+                        content: response_content.content,
+                        entity: None,
+                    }))
+                },  
+                StatusCode::UNAUTHORIZED => {  
+                    error!("You are not authorized to delete the project role template binding");
+                    Err(Error::ResponseError(ResponseContent {
+                        status: response_content.status,
+                        content: response_content.content,
+                        entity: None,
+                    }))
+                },  
                 _ => {  
-                    // If not status 200, treat as UnknownValue  
-                    match serde_json::from_str::<serde_json::Value>(&response_content.content) {  
-                        Ok(unknown_data) => Err(Error::ResponseError(ResponseContent {  
-                            status: response_content.status,  
-                            content: response_content.content,  
-                            entity: Some(  
-                                DeleteManagementCattleIoV3NamespacedProjectRoleTemplateBindingError::UnknownValue(  
-                                    unknown_data,  
-                                ),  
-                            ),  
-                        })),  
-                        Err(unknown_deserialize_err) => Err(Error::Serde(unknown_deserialize_err)),  
-                    }  
+                    let unknown_value: serde_json::Value =
+                        serde_json::from_str(&response_content.content).unwrap_or_default();
+                    error!("Unexpected success status: {}", response_content.status);
+                    Err(Error::ResponseError(ResponseContent {
+                        status: response_content.status,
+                        content: response_content.content,
+                        entity: Some(DeleteManagementCattleIoV3NamespacedProjectRoleTemplateBindingError::UnknownValue(
+                            unknown_value,
+                        )),
+                    }))
                 }  
             }  
-        }  
+        },  
+        Err(err) => {  
+            error!("Request error: {}", err);
+            Err(err)  
+        },  
     }  
 }
 
