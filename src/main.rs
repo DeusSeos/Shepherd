@@ -61,7 +61,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // TODO: change this to use format fetched from our custom config file
     let file_format = FileFormat::Yaml;
 
-    let download = false;
+    let download = true;
 
     if download {
         // Download the current configuration from the Rancher API
