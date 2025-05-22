@@ -28,7 +28,7 @@ use rancher_client::{
     },
 };
 use serde_json::Value;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::models::ConversionError;
 
@@ -195,7 +195,7 @@ pub async fn get_namespaced_project_role_template_bindings(
             Err(e)
         }
         Ok(response_content) => {
-            debug!("Received response: {:?}", response_content);
+            trace!("Received response: {:?}", response_content);
 
             match response_content.status {
                 StatusCode::OK => {
@@ -297,7 +297,7 @@ pub async fn update_project_role_template_binding(
             Err(e)
         }
         Ok(response_content) => {
-            debug!("Received response: {:?}", response_content);
+            trace!("Received response: {:?}", response_content);
             match response_content.status {
                 StatusCode::OK => {
                     match serde_json::from_str(&response_content.content) {
@@ -398,7 +398,7 @@ pub async fn create_project_role_template_binding(
 
     match result {
         Ok(response_content) => {
-            debug!("Received response: {:?}", response_content);
+            trace!("Received response: {:?}", response_content);
 
             match response_content.status {
                 StatusCode::OK | StatusCode::CREATED => {
