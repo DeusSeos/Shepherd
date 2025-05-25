@@ -1,12 +1,12 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 
+use serde::{de::DeserializeOwned, Serialize};
 use tokio::{fs::OpenOptions, io::AsyncWriteExt, task::JoinHandle};
 use tracing::{debug, error};
-use std::error::Error;
 
-use crate::{deserialize_object, load_object, models::{ConversionError, CreatedObject, MinimalObject, ObjectType}, project::Project, prtb::ProjectRoleTemplateBinding, rt::RoleTemplate, serialize_object};
+use crate::{load_object, models::{CreatedObject, MinimalObject, ObjectType}, project::Project, prtb::ProjectRoleTemplateBinding, rt::RoleTemplate, serialize_object};
 
 #[derive(Clone, Copy)]
 pub enum FileFormat {
@@ -22,6 +22,42 @@ impl std::fmt::Display for FileFormat {
     }
 }
 
+impl FileFormat {
+    /// Serialize a value into a string given the specified file format.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if the serialization fails.
+    ///
+    /// # Examples
+    ///
+    /// 
+    pub fn serialize<T: Serialize>(&self, value: &T) -> Result<String> {
+        match self {
+            FileFormat::Yaml => serde_yaml::to_string(value).map_err(|e| e.into()),
+            FileFormat::Json => serde_json::to_string_pretty(value).map_err(|e| e.into()),
+            FileFormat::Toml => toml::to_string(value).map_err(|e| e.into()),
+        }
+    }
+    
+    /// Deserialize a value from a string given the specified file format.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if the deserialization fails.
+    ///
+    /// # Examples
+    ///
+    /// 
+    pub fn deserialize<T: DeserializeOwned>(&self, data: &str) -> Result<T> {
+        match self {
+            FileFormat::Yaml => serde_yaml::from_str(data).map_err(|e| e.into()),
+            FileFormat::Json => serde_json::from_str(data).map_err(|e| e.into()),
+            FileFormat::Toml => toml::from_str(data).map_err(|e| e.into()),
+        }
+    }
+}
+
 
 /// Reads an object from a file path and returns a MinimalObject of the specified type
 ///
@@ -32,7 +68,7 @@ impl std::fmt::Display for FileFormat {
 /// # Returns
 /// * `Result<MinimalObject, ConversionError>` - The minimal object loaded from the file
 ///
-pub async fn get_minimal_object_from_path(object_type: ObjectType, path: &Path) -> Result<MinimalObject, ConversionError> {
+pub async fn get_minimal_object_from_path(object_type: ObjectType, path: &Path) -> Result<MinimalObject> {
     let file_format = file_format_from_path(path);
     match object_type {
         ObjectType::Project => {
@@ -48,7 +84,7 @@ pub async fn get_minimal_object_from_path(object_type: ObjectType, path: &Path) 
             MinimalObject::try_from(object)
         }
         ObjectType::Cluster => {
-            Err(ConversionError::Other("Mininal Object for Cluster unimplemented".into()))
+            bail!("Mininal Object for Cluster unimplemented")
         }
     }
 }
@@ -59,84 +95,95 @@ pub async fn get_minimal_object_from_contents(
     object_type: ObjectType,
     contents: &str,
     file_format: &FileFormat,
-) -> Result<MinimalObject, ConversionError> {
+) -> Result<MinimalObject> {
     match object_type {
         ObjectType::Project => {
             debug!("Deserializing Project: {:#?}", contents);
-            let object: Project = deserialize_object(contents, file_format)?;
+            // let object: Project = deserialize_object(contents, file_format)?;
+            let object: Project = file_format.deserialize(contents)?;
             MinimalObject::try_from(object)
         },
         ObjectType::RoleTemplate => {
             debug!("Deserializing RT: {:#?}", contents);
-            let object: RoleTemplate = deserialize_object(contents, file_format)?;
+            let object: RoleTemplate = file_format.deserialize(contents)?;
             MinimalObject::try_from(object)
         },
         ObjectType::ProjectRoleTemplateBinding => {
             debug!("Deserializing PRTB: {:#?}", contents);
-            let object: ProjectRoleTemplateBinding = deserialize_object(contents, file_format)?;
+            let object: ProjectRoleTemplateBinding = file_format.deserialize(contents)?;
             MinimalObject::try_from(object)
         },
         ObjectType::Cluster => {
-            Err(ConversionError::Other("Minimal Object for Cluster unimplemented".into()))
+            bail!("Minimal Object for Cluster unimplemented")
         }
     }
 }
 
 
-// Spawn tasks to write back the successfully created objects
-// TODO: add error handling and return results
+/// Writes back successfully created objects to their respective files
+///
+/// # Arguments
+/// * `successes` - A vector of tuples containing the file path and created object
+/// * `file_format` - The format to use for serialization
+///
+/// # Returns
+/// A Result with a vector of file paths that were successfully written or error information
 pub async fn write_back_objects(
     successes: Vec<(PathBuf, CreatedObject)>,
     file_format: FileFormat,
-)
-    {
-    let mut handles: Vec<JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>> = Vec::new();
+) -> anyhow::Result<Vec<PathBuf>> {
+    let mut handles: Vec<JoinHandle<anyhow::Result<PathBuf>>> = Vec::new();
+    let mut results = Vec::new();
+
+    // Spawn tasks to write back objects
     for (file_path, created_object) in successes {
-        let handle = tokio::spawn(async move {
+        let format = file_format;
+        handles.push(tokio::spawn(async move {
             match created_object {
                 CreatedObject::ProjectRoleTemplateBinding(created) => {
                     debug!("Writing PRTB: {:#?}", created);
                     let convert = ProjectRoleTemplateBinding::try_from(created)?;
-                    write_object_to_file(&file_path, &file_format, &convert).await.unwrap_or_else(
-                        |err| {
-                            error!("Error writing PRTB: {:#?}", err);
-                    });
+                    write_object_to_file(&file_path, &format, &convert).await?;
+                    Ok(file_path)
                 }
                 CreatedObject::Project(created) => {
                     debug!("Writing Project: {:#?}", created);
                     let convert = Project::try_from(created)?;
-                    write_object_to_file(&file_path, &file_format, &convert).await.unwrap_or_else(
-                        |err| {
-                            error!("Error writing Project: {:#?}", err);
-                        },
-                    );
+                    write_object_to_file(&file_path, &format, &convert).await?;
+                    Ok(file_path)
                 }
                 CreatedObject::RoleTemplate(created) => {
                     debug!("Writing Role Template: {:#?}", created);
                     let convert = RoleTemplate::try_from(created)?;
-                    write_object_to_file(&file_path, &file_format, &convert).await.unwrap_or_else(
-                        |err| {
-                            error!("Error writing Role Template: {:#?}", err);
-                        },
-                    );
+                    write_object_to_file(&file_path, &format, &convert).await?;
+                    Ok(file_path)
                 }
                 _ => {
-                    unimplemented!("Writing back object type not implemented")
+                    anyhow::bail!("Writing back object type not implemented")
                 }
             }
-            Ok(())
-        });
-        handles.push(handle);
+        }));
     }
 
+    // Wait for all tasks to complete and collect results
     for handle in handles {
         match handle.await {
-            Err(join_err) => eprintln!("Task panicked: {:?}", join_err),
-            Ok(Err(err)) => eprintln!("Task error: {:?}", err),
-            Ok(Ok(_)) => {}
+            Ok(result) => match result {
+                Ok(path) => {
+                    debug!("Successfully wrote to file: {}", path.display());
+                    results.push(path);
+                }
+                Err(e) => {
+                    error!("Error writing object: {}", e);
+                }
+            },
+            Err(join_err) => {
+                error!("Task panicked: {:?}", join_err);
+            }
         }
     }
 
+    Ok(results)
 }
 
 

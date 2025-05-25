@@ -9,11 +9,16 @@ pub mod project;
 pub mod prtb;
 pub mod rt;
 pub mod modify;
+pub mod logging;
+pub mod errors;
+pub mod traits;
 
 use anyhow::{bail, Context, Result};
 use file::{file_extension_from_format, get_file_name_for_object, FileFormat};
 
 use models::{ConversionError, CreatedObject, ObjectType};
+
+use crate::logging::log_api_error;
 
 use serde_json::Value;
 use std::collections::HashMap;
@@ -24,7 +29,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::fs::{create_dir_all, read_dir, read_to_string, write};
 use tokio::time::sleep;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, trace, error, info, warn};
 
 use cluster::Cluster;
 use config::{ClusterConfig, RancherClusterConfig};
@@ -321,7 +326,8 @@ pub async fn load_configuration(
         bail!("Cluster file does not exist: {:?}", cluster_file);
     }
 
-    info!("Loading cluster configuration from file: {:?}", cluster_file);
+    // info!("Loading cluster configuration from file: {:?}", cluster_file);
+    info!(path = %cluster_file.display(), "Reading cluster file");
     let cluster_file_content = read_to_string(&cluster_file)
         .await
         .with_context(|| format!("Failed to read cluster file: {:?}", cluster_file))?;
@@ -434,7 +440,7 @@ fn remove_path_and_return(value: &mut Value, path: &[&str]) -> Option<Value> {
 pub async fn load_object<T: serde::de::DeserializeOwned>(
     file_path: &Path,
     file_format: &FileFormat,
-) -> Result<T, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<T> {
     let contents = read_to_string(file_path).await?;
     match file_format {
         FileFormat::Yaml => Ok(serde_yaml::from_str(&contents)?),
@@ -448,40 +454,56 @@ pub async fn load_object<T: serde::de::DeserializeOwned>(
 /// # Arguments
 /// * `max_retries` - Number of times to retry
 /// * `delay` - Duration between retries
-/// * `fetch_fn` - An async closure that attempts to fetch the object and returns `Ok(Some(obj))` if found, `Ok(None)` if not yet available, or `Err(e)` on failure
+/// * `fetch_fn` - An async closure that attempts to fetch the object and returns `Ok(T)` if found or `Err(anyhow::Error)` on failure
+/// * `operation_name` - Name of the operation for logging purposes
 ///
 /// # Returns
 /// * `Ok(T)` - If the object was eventually found
-/// * `Err(Box<dyn std::error::Error + Send + Sync>)` - If polling fails or times out
+/// * `Err(anyhow::Error)` - If polling fails or times out
 ///
 pub async fn wait_for_object_ready<T, F, Fut>(
     max_retries: usize,
     delay: Duration,
     mut fetch_fn: F,
-) -> Result<T, Box<dyn std::error::Error + Send + Sync>>
+    operation_name: &str,
+) -> Result<T, anyhow::Error>
 where
     F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = Result<Option<T>, Box<dyn std::error::Error + Send + Sync>>>,
-    T: Send + Sync + 'static,
+    Fut: std::future::Future<Output = Result<T, anyhow::Error>>
 {
+
     for attempt in 0..max_retries {
+        trace!("Attempt {}/{} for {}", attempt + 1, max_retries, operation_name);
+        
         match fetch_fn().await {
-            Ok(Some(obj)) => return Ok(obj),
-            Ok(None) => {
-                if attempt + 1 == max_retries {
-                    break;
-                }
-                sleep(delay).await;
+            Ok(obj) => {
+                debug!("Successfully retrieved object on attempt {}/{}", attempt + 1, max_retries);
+                return Ok(obj);
             }
             Err(e) => {
+                // Check if this is a "not found" error that we should retry
+                let is_not_found = e.to_string().contains("not found");
+                
                 if attempt + 1 == max_retries {
-                    return Err(e);
+                    let err = anyhow::anyhow!("Timed out waiting for object: {}", e);
+                    log_api_error(&format!("wait_for_object_ready:{}", operation_name), &err);
+                    return Err(err);
                 }
-                sleep(delay).await;
+                
+                if is_not_found {
+                    trace!("Object not found on attempt {}/{}, waiting to retry...", attempt + 1, max_retries);
+                } else {
+                    debug!("Error on attempt {}/{}: {}", attempt + 1, max_retries, e);
+                }
+                
+                tokio::time::sleep(delay).await;
             }
         }
     }
-    Err("Timed out waiting for object to become ready".into())
+    
+    let err = anyhow::anyhow!("Timed out waiting for object to become ready after {} attempts", max_retries);
+    log_api_error(&format!("wait_for_object_ready:{}", operation_name), &err);
+    Err(err)
 }
 
 
@@ -496,17 +518,13 @@ where
 ///
 ///
 async fn await_handles(
-    handles: Vec<
-        tokio::task::JoinHandle<
-            Result<(PathBuf, CreatedObject), Box<dyn std::error::Error + Send + Sync>>,
-        >,
-    >,
-) -> Vec<Result<(PathBuf, CreatedObject), Box<dyn std::error::Error + Send + Sync>>> {
+    handles: Vec<tokio::task::JoinHandle<anyhow::Result<(PathBuf, CreatedObject)>,>>,
+) -> Vec<anyhow::Result<(PathBuf, CreatedObject)>> {
     let mut results = Vec::with_capacity(handles.len());
     for handle in handles {
         match handle.await {
             Ok(res) => results.push(res),
-            Err(join_err) => results.push(Err(Box::new(join_err))),
+            Err(join_err) => results.push(Err(anyhow::anyhow!(join_err))),
         }
     }
     results
@@ -527,48 +545,64 @@ async fn await_handles(
 /// If the polling fails for any reason, or if the object is not created successfully,
 /// an error will be returned.
 ///
-/// # Example
-///
-///
 async fn poll_role_template_ready(
     config: Arc<Configuration>,
     created: &IoCattleManagementv3RoleTemplate,
-) -> Result<IoCattleManagementv3RoleTemplate, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<IoCattleManagementv3RoleTemplate, anyhow::Error> {
     let rt_name = created
         .metadata
         .as_ref()
         .and_then(|m| m.name.as_deref())
-        .ok_or("Missing metadata.name in created role template")?;
+        .ok_or_else(|| anyhow::anyhow!("Missing metadata.name in created role template"))?;
 
     let resource_version = created
         .metadata
         .as_ref()
         .and_then(|m| m.resource_version.as_deref());
 
-    wait_for_object_ready(10, Duration::from_secs(1), || {
-        let rt_name = rt_name.to_string();
-        let resource_version = resource_version.map(|s| s.to_string());
-        let config = config.clone();
+    wait_for_object_ready(
+        10, 
+        Duration::from_secs(1), 
+        || {
+            let rt_name = rt_name.to_string();
+            let resource_version = resource_version.map(|s| s.to_string());
+            let config = config.clone();
 
-        async move {
-            match find_role_template(&config, &rt_name, resource_version.as_deref()).await {
-                Ok(rt) => Ok(Some(rt)),
-                Err(e) => Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
+            async move {
+                find_role_template(&config, &rt_name, resource_version.as_deref()).await
             }
-        }
-    })
+        },
+        "role_template"
+    )
     .await
 }
 
+/// Poll a project until it is ready. This function is used to block until
+/// a project is created successfully.
+///
+/// # Arguments
+///
+/// * `config`: The configuration to use for the request
+/// * `created`: The created project that we want to poll.
+///
+/// # Returns
+///
+/// * `IoCattleManagementv3Project` - The project once it's ready
+///
+/// # Errors
+///
+/// * `anyhow::Error` - If the polling fails or times out
+///
+#[async_backtrace::framed]
 async fn poll_project_ready(
     config: Arc<Configuration>,
     created: &IoCattleManagementv3Project,
-) -> Result<IoCattleManagementv3Project, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<IoCattleManagementv3Project, anyhow::Error> {
     let p_name = created
         .metadata
         .as_ref()
         .and_then(|m| m.name.as_deref())
-        .ok_or("Missing metadata.name in created project")?;
+        .ok_or_else(|| anyhow::anyhow!("Missing metadata.name in created project"))?;
 
     let resource_version = created
         .metadata
@@ -578,26 +612,25 @@ async fn poll_project_ready(
     let c_name = created
         .spec
         .as_ref()
-        .ok_or("Missing spec")?
+        .ok_or_else(|| anyhow::anyhow!("Missing spec in created project"))?
         .cluster_name
         .clone();
 
-    wait_for_object_ready(10, Duration::from_secs(1), || {
-        let config = config.clone();
-        let p_name = p_name.to_string();
-        let c_name = c_name.to_string();
-        let resource_version = resource_version.map(|s| s.to_string());
+    wait_for_object_ready(
+        10, 
+        Duration::from_secs(1), 
+        || {
+            let p_name = p_name.to_string();
+            let c_name = c_name.to_string();
+            let resource_version = resource_version.map(|s| s.to_string());
+            let config = config.clone();
 
-        async move {
-            match find_project(&config, &c_name, &p_name, resource_version.as_deref()).await {
-                Ok(p) => {
-                    info!("Found project: {:?}", p_name);
-                    Ok(Some(p))
-                }
-                Err(e) => Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
+            async move {
+                find_project(&config, &c_name, &p_name, resource_version.as_deref()).await
             }
-        }
-    })
+        },
+        "project"
+    )
     .await
 }
 

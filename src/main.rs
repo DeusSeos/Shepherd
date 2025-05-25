@@ -120,7 +120,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let created_objects = create_objects(configuration.clone(), new_files, file_format).await;
 
         // Separate errors and successes from object creation results
-        let mut errors: Vec<Box<dyn Error>> = Vec::new();
+        let mut errors = Vec::new();
         let mut successes: Vec<(PathBuf, CreatedObject)> = Vec::new();
         for result in created_objects {
             match result {
@@ -130,7 +130,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Write back the successfully created objects
-        write_back_objects(successes, file_format).await;
+        write_back_objects(successes, file_format).await?;
 
         let mut objects_to_delete: Vec<(ObjectType, MinimalObject)> = Vec::new();
 

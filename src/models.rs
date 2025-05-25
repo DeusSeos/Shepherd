@@ -1,4 +1,6 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, path::Path};
+
+use anyhow::Result;
 
 use rancher_client::models::{IoCattleManagementv3Project, IoCattleManagementv3ProjectRoleTemplateBinding, IoCattleManagementv3RoleTemplate, IoK8sApimachineryPkgApisMetaV1Status};
 use serde::{Deserialize, Serialize};
@@ -105,7 +107,7 @@ pub struct MinimalObject {
 
 // TryFrom for &Project
 impl TryFrom<&Project> for MinimalObject {
-    type Error = ConversionError;
+    type Error = anyhow::Error;
 
     fn try_from(value: &Project) -> Result<Self, Self::Error> {
         Ok(MinimalObject {
@@ -119,7 +121,7 @@ impl TryFrom<&Project> for MinimalObject {
 
 // TryFrom for Project
 impl TryFrom<Project> for MinimalObject {
-    type Error = ConversionError;
+    type Error = anyhow::Error;
 
     fn try_from(value: Project) -> Result<Self, Self::Error> {
         Ok(MinimalObject {
@@ -133,7 +135,7 @@ impl TryFrom<Project> for MinimalObject {
 
 // TryFrom for &ProjectRoleTemplateBinding
 impl TryFrom<&ProjectRoleTemplateBinding> for MinimalObject {
-    type Error = ConversionError;
+    type Error = anyhow::Error;
 
     fn try_from(value: &ProjectRoleTemplateBinding) -> Result<Self, Self::Error> {
         Ok(MinimalObject {
@@ -147,7 +149,7 @@ impl TryFrom<&ProjectRoleTemplateBinding> for MinimalObject {
 
 // TryFrom for ProjectRoleTemplateBinding
 impl TryFrom<ProjectRoleTemplateBinding> for MinimalObject {
-    type Error = ConversionError;
+    type Error = anyhow::Error;
 
     fn try_from(value: ProjectRoleTemplateBinding) -> Result<Self, Self::Error> {
         Ok(MinimalObject {
@@ -161,7 +163,7 @@ impl TryFrom<ProjectRoleTemplateBinding> for MinimalObject {
 
 // TryFrom for &RoleTemplate
 impl TryFrom<&RoleTemplate> for MinimalObject {
-    type Error = ConversionError;
+    type Error = anyhow::Error;
 
     fn try_from(value: &RoleTemplate) -> Result<Self, Self::Error> {
         Ok(MinimalObject {
@@ -175,7 +177,7 @@ impl TryFrom<&RoleTemplate> for MinimalObject {
 
 // TryFrom for RoleTemplate
 impl TryFrom<RoleTemplate> for MinimalObject {
-    type Error = ConversionError;
+    type Error = anyhow::Error;
 
     fn try_from(value: RoleTemplate) -> Result<Self, Self::Error> {
         Ok(MinimalObject {
@@ -197,12 +199,28 @@ impl TryFrom<RoleTemplate> for MinimalObject {
 /// - `RoleTemplate`: Represents a role template object.
 /// - `ProjectRoleTemplateBinding`: Represents a project-role-template binding object.
 ///
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Ord, PartialOrd)]
 pub enum ObjectType {
     RoleTemplate,
     Project,
     ProjectRoleTemplateBinding,
     Cluster,
+}
+
+impl ObjectType {
+    pub fn priority(&self) -> u8 {
+        match self {
+            ObjectType::RoleTemplate => 0,
+            ObjectType::Project => 1,
+            ObjectType::ProjectRoleTemplateBinding => 2,
+            ObjectType::Cluster => 3,
+        }
+    }
+    
+    pub fn from_path(path: &Path) -> Option<Self> {
+        // Logic to determine object type from path
+        todo!("Implement logic to determine object type from path")
+    }
 }
 
 

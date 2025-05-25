@@ -9,6 +9,7 @@ anyhow = "1.0.98"
 async-backtrace = "0.2.7"
 async-recursion = "1.1.1"
 chrono = { version = "0.4.41", features = ["serde"] }
+fastrand = "2.3.0"
 futures = "0.3.31"
 git2 = "0.20.1"
 json-patch = "4.0.0"
