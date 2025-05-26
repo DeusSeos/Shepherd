@@ -1,24 +1,38 @@
 // This file will contain all the functions that will be used to interact and extract from the Rancher API
-pub mod cluster;
-pub mod config;
-pub mod diff;
-pub mod file;
-pub mod git;
+pub mod utils{
+    pub mod diff;
+    pub mod file;
+    pub mod git;
+    pub mod logging;
+}
+
+
+pub mod resources {
+    pub mod project;
+    pub mod cluster;
+    pub mod prtb;
+    pub mod rt;
+    
+}
+
+pub mod api {
+    pub mod config;
+    pub mod errors;
+    pub mod client_info;
+}
+
+
 pub mod models;
-pub mod project;
-pub mod prtb;
-pub mod rt;
 pub mod modify;
-pub mod logging;
-pub mod errors;
 pub mod traits;
 
 use anyhow::{bail, Context, Result};
-use file::{file_extension_from_format, get_file_name_for_object, FileFormat};
+
+use utils::file::{file_extension_from_format, get_file_name_for_object, FileFormat};
+use utils::logging::log_api_error;
 
 use models::{ConversionError, CreatedObject, ObjectType};
 
-use crate::logging::log_api_error;
 
 use serde_json::Value;
 use std::collections::HashMap;
@@ -31,11 +45,11 @@ use tokio::fs::{create_dir_all, read_dir, read_to_string, write};
 use tokio::time::sleep;
 use tracing::{debug, trace, error, info, warn};
 
-use cluster::Cluster;
-use config::{ClusterConfig, RancherClusterConfig};
-use project::{find_project, Project};
-use prtb::ProjectRoleTemplateBinding;
-use rt::{find_role_template, get_role_templates, RoleTemplate};
+use api::config::{ClusterConfig, RancherClusterConfig};
+use resources::cluster::{self, Cluster, get_clusters};
+use resources::project::{find_project, get_projects, Project};
+use resources::prtb::{get_namespaced_project_role_template_bindings, ProjectRoleTemplateBinding};
+use resources::rt::{find_role_template, get_role_templates, RoleTemplate};
 
 use rancher_client::apis::configuration::{ApiKey, Configuration};
 use rancher_client::models::{
@@ -156,7 +170,7 @@ pub async fn download_current_configuration(
             .await
             .with_context(|| format!("Failed to write cluster file {:?}", cluster_file))?;
 
-        let rancher_projects = project::get_projects(
+        let rancher_projects = get_projects(
             configuration,
             &cluster.id,
             None,
@@ -188,7 +202,7 @@ pub async fn download_current_configuration(
                 .await
                 .with_context(|| format!("Failed to write project file {:?}", project_file))?;
 
-            let rancher_prtbs = prtb::get_namespaced_project_role_template_bindings(
+            let rancher_prtbs = get_namespaced_project_role_template_bindings(
                 configuration,
                 &project.id.clone().unwrap(),
                 None,
@@ -247,7 +261,7 @@ pub async fn load_configuration_from_rancher(
 
     let rrt: Vec<IoCattleManagementv3RoleTemplate> = rancher_role_templates.items.clone();
 
-    let rancher_projects = project::get_projects(
+    let rancher_projects = get_projects(
         configuration,
         cluster_id,
         None,
@@ -277,7 +291,7 @@ pub async fn load_configuration_from_rancher(
             .ok_or_else(|| anyhow::anyhow!("Project missing metadata name"))?;
 
         let rancher_project_role_template_bindings =
-            prtb::get_namespaced_project_role_template_bindings(
+            get_namespaced_project_role_template_bindings(
                 configuration,
                 project_id,
                 None,

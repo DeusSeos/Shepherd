@@ -2,13 +2,13 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Serialize, Deserialize};
 use tokio::{fs::OpenOptions, io::AsyncWriteExt, task::JoinHandle};
 use tracing::{debug, error};
 
-use crate::{load_object, models::{CreatedObject, MinimalObject, ObjectType}, project::Project, prtb::ProjectRoleTemplateBinding, rt::RoleTemplate, serialize_object};
+use crate::{load_object, models::{CreatedObject, MinimalObject, ObjectType}, resources::project::Project, resources::prtb::ProjectRoleTemplateBinding, resources::rt::RoleTemplate, serialize_object};
 
-#[derive(Clone, Copy)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FileFormat {
     Yaml,
     Json,

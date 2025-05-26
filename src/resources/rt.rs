@@ -1,4 +1,4 @@
-use crate::logging::log_api_error;
+use crate::utils::logging::log_api_error;
 use anyhow::{Context as anyhow_context, Result};
 
 use std::collections::HashMap;

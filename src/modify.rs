@@ -1,10 +1,10 @@
-use crate::config::RancherClusterConfig;
-use crate::diff::compute_cluster_diff;
-use crate::file::FileFormat;
+use crate::api::config::RancherClusterConfig;
+use crate::utils::diff::compute_cluster_diff;
+use crate::utils::file::FileFormat;
 use crate::models::{ConversionError, CreatedObject, MinimalObject};
-use crate::project::{create_project, delete_project, update_project};
-use crate::prtb::{delete_project_role_template_binding, update_project_role_template_binding};
-use crate::rt::{delete_role_template, update_role_template};
+use crate::resources::project::{create_project, delete_project, update_project};
+use crate::resources::prtb::{delete_project_role_template_binding, update_project_role_template_binding};
+use crate::resources::rt::{delete_role_template, update_role_template};
 use crate::{
     await_handles, load_configuration, load_configuration_from_rancher, load_object, ObjectType,
 };
@@ -21,9 +21,9 @@ use reqwest::StatusCode;
 use futures::{stream, FutureExt, StreamExt};
 use tracing::{debug, error, info, trace, warn};
 
-use crate::project::Project;
-use crate::prtb::{create_project_role_template_binding, ProjectRoleTemplateBinding};
-use crate::rt::create_role_template;
+use crate::resources::project::Project;
+use crate::resources::prtb::{create_project_role_template_binding, ProjectRoleTemplateBinding};
+use crate::resources::rt::create_role_template;
 
 use anyhow::Result;
 

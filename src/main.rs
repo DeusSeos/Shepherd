@@ -5,10 +5,10 @@ use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use rancher_cac::file::{
+use rancher_cac::utils::file::{
     get_minimal_object_from_contents, write_back_objects, FileFormat,
 };
-use rancher_cac::git::{
+use rancher_cac::utils::git::{
     commit_changes, get_deleted_files_and_contents, get_modified_files,
     get_new_uncommited_files, init_git_repo_with_main_branch,
 };

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{logging::log_api_error, models::ResourceVersionMatch};
+use crate::{utils::logging::log_api_error, models::ResourceVersionMatch};
 use anyhow::{Context as anyhow_context, Result};
 
 use reqwest::StatusCode;

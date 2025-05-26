@@ -6,7 +6,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 use tracing::debug;
 
-use crate::{clean_up_value, config::RancherClusterConfig, project::PROJECT_EXCLUDE_PATHS, prtb::PRTB_EXCLUDE_PATHS, rt::RT_EXCLUDE_PATHS, models::ObjectType};
+use crate::{clean_up_value, api::config::RancherClusterConfig, resources::project::PROJECT_EXCLUDE_PATHS, resources::prtb::PRTB_EXCLUDE_PATHS, resources::rt::RT_EXCLUDE_PATHS, models::ObjectType};
 
 
 /// compute the cluster diff between the current state and the desired state

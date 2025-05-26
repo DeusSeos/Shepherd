@@ -6,7 +6,7 @@ use rancher_client::models::{IoCattleManagementv3Project, IoCattleManagementv3Pr
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{project::Project, prtb::ProjectRoleTemplateBinding, rt::RoleTemplate};
+use crate::{resources::project::Project, resources::prtb::ProjectRoleTemplateBinding, resources::rt::RoleTemplate};
 
 #[derive(Debug, Error, PartialEq, Clone)]
 pub enum ConversionError {

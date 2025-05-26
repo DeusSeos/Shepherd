@@ -2,8 +2,9 @@ use std::{collections::HashMap, fmt::Display, path::PathBuf};
 
 use rancher_client::models::{IoCattleManagementv3Cluster, IoCattleManagementv3Project, IoCattleManagementv3ProjectRoleTemplateBinding, IoCattleManagementv3RoleTemplate};
 use serde::{Deserialize, Serialize};
+use anyhow::{Result, Context};
 
-use crate::{cluster::Cluster, file::FileFormat, project::Project, prtb::ProjectRoleTemplateBinding, rt::RoleTemplate};
+use crate::{cluster::Cluster, utils::file::FileFormat, resources::project::Project, resources::prtb::ProjectRoleTemplateBinding, resources::rt::RoleTemplate};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ClusterConfig {
@@ -98,10 +99,19 @@ impl TryFrom<ClusterConfig> for RancherClusterConfig {
 }
 
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ShepherdConfig {
     pub shepherd_config_path: PathBuf,
     pub endpoint_url: String,
     pub file_format: FileFormat,
     pub token: String,
-    pub remote_repo_url: String,
+    pub remote_git_url: String,
+}
+
+impl ShepherdConfig {
+    pub fn from_file(path: &str) -> Result<Self> {
+        let file = std::fs::read_to_string(path).context("Failed to read config file")?;
+        let config: ShepherdConfig = toml::from_str(&file).context("Failed to parse config file")?;
+        Ok(config)
+    }
 }

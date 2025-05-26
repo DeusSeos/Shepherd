@@ -43,14 +43,14 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::{
     deserialize_object,
-    file::{file_extension_from_format, FileFormat},
+    utils::file::{file_extension_from_format, FileFormat},
 };
 
-use crate::logging::log_api_error;
+use crate::utils::logging::log_api_error;
 
 use crate::models::{ConversionError, ResourceVersionMatch};
 
-use crate::diff::diff_boxed_hashmap_string_string;
+use crate::utils::diff::diff_boxed_hashmap_string_string;
 
 pub const PROJECT_EXCLUDE_PATHS: &[&str] = &[
     "metadata.creationTimestamp",

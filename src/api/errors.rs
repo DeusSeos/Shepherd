@@ -18,3 +18,23 @@ pub enum AppError {
     #[error("{0}")]
     Other(String),
 }
+
+
+
+
+pub fn handle_result_collection<T, E>(results: Vec<Result<T, E>>) -> (Vec<T>, Vec<E>) 
+where 
+    E: std::fmt::Debug
+{
+    let mut successes = Vec::new();
+    let mut errors = Vec::new();
+    
+    for result in results {
+        match result {
+            Ok(value) => successes.push(value),
+            Err(err) => errors.push(err),
+        }
+    }
+    
+    (successes, errors)
+}
