@@ -224,8 +224,6 @@ impl ObjectType {
 }
 
 
-
-
 pub enum CreatedObject {
     // Cluster(Cluster),
     Status(IoK8sApimachineryPkgApisMetaV1Status),

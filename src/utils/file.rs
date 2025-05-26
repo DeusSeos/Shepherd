@@ -10,8 +10,12 @@ use crate::{load_object, models::{CreatedObject, MinimalObject, ObjectType}, res
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FileFormat {
+    // allow uppercase and lowercase when deserializing
+    #[serde(alias = "yaml", alias = "YAML", alias = "Yml", alias = "YML", alias = "yml")]
     Yaml,
+    #[serde(alias = "json", alias = "JSON", alias = "Json", alias = "json")]
     Json,
+    #[serde(alias = "toml", alias = "TOML", alias = "Toml", alias = "toml")]
     Toml,
 }
 
@@ -28,10 +32,6 @@ impl FileFormat {
     /// # Errors
     ///
     /// This function will return an error if the serialization fails.
-    ///
-    /// # Examples
-    ///
-    /// 
     pub fn serialize<T: Serialize>(&self, value: &T) -> Result<String> {
         match self {
             FileFormat::Yaml => serde_yaml::to_string(value).map_err(|e| e.into()),
@@ -45,10 +45,6 @@ impl FileFormat {
     /// # Errors
     ///
     /// This function will return an error if the deserialization fails.
-    ///
-    /// # Examples
-    ///
-    /// 
     pub fn deserialize<T: DeserializeOwned>(&self, data: &str) -> Result<T> {
         match self {
             FileFormat::Yaml => serde_yaml::from_str(data).map_err(|e| e.into()),

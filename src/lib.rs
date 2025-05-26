@@ -6,19 +6,18 @@ pub mod utils{
     pub mod logging;
 }
 
-
 pub mod resources {
     pub mod project;
     pub mod cluster;
     pub mod prtb;
     pub mod rt;
-    
 }
 
 pub mod api {
     pub mod config;
     pub mod errors;
     pub mod client_info;
+    pub mod client;
 }
 
 
@@ -51,7 +50,7 @@ use resources::project::{find_project, get_projects, Project};
 use resources::prtb::{get_namespaced_project_role_template_bindings, ProjectRoleTemplateBinding};
 use resources::rt::{find_role_template, get_role_templates, RoleTemplate};
 
-use rancher_client::apis::configuration::{ApiKey, Configuration};
+use rancher_client::apis::configuration::Configuration;
 use rancher_client::models::{
     IoCattleManagementv3Project, IoCattleManagementv3ProjectRoleTemplateBinding,
     IoCattleManagementv3RoleTemplate,
@@ -59,16 +58,7 @@ use rancher_client::models::{
 
 include!(concat!(env!("OUT_DIR"), "/client_info.rs"));
 
-pub fn rancher_config_init(host: &str, token: &str) -> Configuration {
-    let mut config = Configuration::new();
-    config.base_path = host.to_string();
 
-    config.api_key = Some(ApiKey {
-        prefix: Some("Bearer".to_string()),
-        key: token.to_string(),
-    });
-    config
-}
 
 // Local usage only, for testing purposes
 // This function will be used to fetch the current configuration from the Rancher API

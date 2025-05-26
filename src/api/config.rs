@@ -1,3 +1,4 @@
+use std::fmt;
 use std::{collections::HashMap, fmt::Display, path::PathBuf};
 
 use rancher_client::models::{IoCattleManagementv3Cluster, IoCattleManagementv3Project, IoCattleManagementv3ProjectRoleTemplateBinding, IoCattleManagementv3RoleTemplate};
@@ -101,11 +102,14 @@ impl TryFrom<ClusterConfig> for RancherClusterConfig {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ShepherdConfig {
-    pub shepherd_config_path: PathBuf,
+    pub rancher_config_path: PathBuf,
     pub endpoint_url: String,
     pub file_format: FileFormat,
     pub token: String,
-    pub remote_git_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote_git_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cluster_names: Option<Vec<String>>,
 }
 
 impl ShepherdConfig {
@@ -113,5 +117,31 @@ impl ShepherdConfig {
         let file = std::fs::read_to_string(path).context("Failed to read config file")?;
         let config: ShepherdConfig = toml::from_str(&file).context("Failed to parse config file")?;
         Ok(config)
+    }
+
+}
+
+
+impl Display for ShepherdConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Rancher config path: {}", self.rancher_config_path.display())?;
+        writeln!(f, "Endpoint URL: {}", self.endpoint_url)?;
+        writeln!(f, "File format: {}", self.file_format)?;
+        writeln!(
+            f,
+            "Remote git URL: {}",
+            self.remote_git_url
+                .as_deref()
+                .unwrap_or("<none>")
+        )?;
+        writeln!(
+            f,
+            "Cluster names: {}",
+            self.cluster_names
+                .as_ref()
+                .map(|v| v.join(", "))
+                .unwrap_or_else(|| "<none>".into())
+        )?;
+        Ok(())
     }
 }
