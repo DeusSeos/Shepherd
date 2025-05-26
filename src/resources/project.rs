@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use serde::{de::Error as _, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_diff::SerdeDiff;
 
 use similar::{ChangeTag, TextDiff};
@@ -20,11 +20,7 @@ use rancher_client::{
             list_management_cattle_io_v3_namespaced_project,
             patch_management_cattle_io_v3_namespaced_project,
             read_management_cattle_io_v3_namespaced_project,
-            CreateManagementCattleIoV3NamespacedProjectError,
             DeleteManagementCattleIoV3NamespacedProjectError,
-            ListManagementCattleIoV3NamespacedProjectError,
-            PatchManagementCattleIoV3NamespacedProjectError,
-            ReadManagementCattleIoV3NamespacedProjectError,
         },
         Error, ResponseContent,
     },
@@ -48,7 +44,7 @@ use crate::{
 
 use crate::utils::logging::log_api_error;
 
-use crate::models::{ConversionError, ResourceVersionMatch};
+use crate::models::ResourceVersionMatch;
 
 use crate::utils::diff::diff_boxed_hashmap_string_string;
 

@@ -45,7 +45,7 @@ use tokio::time::sleep;
 use tracing::{debug, trace, error, info, warn};
 
 use api::config::{ClusterConfig, RancherClusterConfig};
-use resources::cluster::{self, Cluster, get_clusters};
+use resources::cluster::{self, Cluster};
 use resources::project::{find_project, get_projects, Project};
 use resources::prtb::{get_namespaced_project_role_template_bindings, ProjectRoleTemplateBinding};
 use resources::rt::{find_role_template, get_role_templates, RoleTemplate};

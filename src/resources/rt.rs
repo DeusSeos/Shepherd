@@ -5,14 +5,14 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use rancher_client::{apis::{configuration::Configuration, management_cattle_io_v3_api::{create_management_cattle_io_v3_role_template, read_management_cattle_io_v3_role_template, CreateManagementCattleIoV3RoleTemplateError, ReadManagementCattleIoV3RoleTemplateError}, Error, ResponseContent}, models::{IoK8sApimachineryPkgApisMetaV1Patch, IoK8sApimachineryPkgApisMetaV1Status}};
+use rancher_client::{apis::{configuration::Configuration, management_cattle_io_v3_api::{create_management_cattle_io_v3_role_template, read_management_cattle_io_v3_role_template}}, models::{IoK8sApimachineryPkgApisMetaV1Patch, IoK8sApimachineryPkgApisMetaV1Status}};
 use reqwest::StatusCode;
 
 use rancher_client::{
     apis::management_cattle_io_v3_api::{
-        patch_management_cattle_io_v3_role_template, PatchManagementCattleIoV3RoleTemplateError,
-        list_management_cattle_io_v3_role_template, ListManagementCattleIoV3RoleTemplateError,
-        delete_management_cattle_io_v3_role_template, DeleteManagementCattleIoV3RoleTemplateError
+        patch_management_cattle_io_v3_role_template,
+        list_management_cattle_io_v3_role_template,
+        delete_management_cattle_io_v3_role_template
     },
     models::io_cattle_managementv3_role_template::Context,
     models::{
@@ -21,9 +21,8 @@ use rancher_client::{
     },
 };
 use serde_json::Value;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, info, trace};
 
-use crate::models::ConversionError;
 
 pub const RT_EXCLUDE_PATHS: &[&str] = &[
     "metadata.creationTimestamp",
