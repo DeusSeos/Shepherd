@@ -61,8 +61,7 @@ pub async fn create_project_role_template_binding(
 ) -> Result<IoCattleManagementv3ProjectRoleTemplateBinding> {
     let prtb_id = body.metadata.as_ref().unwrap().name.clone().unwrap_or_default();
     
-    info!("Creating project role template binding with ID: {} for project: {}", 
-        prtb_id, project_id);
+    // info!("Creating project role template binding with ID: {} for project: {}", prtb_id, project_id);
 
     let api_result = create_management_cattle_io_v3_namespaced_project_role_template_binding(
         configuration,
@@ -122,7 +121,6 @@ pub async fn create_project_role_template_binding(
             }
         },
         Err(e) => {
-            log_api_error("create_project_role_template_binding", &e);
             match e {
                 Error::ResponseError(response_content) => {
                     let msg = match response_content.status {
@@ -199,7 +197,7 @@ pub async fn get_all_project_role_template_bindings(
     resource_version_match: Option<ResourceVersionMatch>,
     continue_: Option<&str>,
 ) -> Result<IoCattleManagementv3ProjectRoleTemplateBindingList> {
-    debug!("Getting all project role template bindings");
+    // debug!("Getting all project role template bindings");
 
     let api_result = list_management_cattle_io_v3_project_role_template_binding_for_all_namespaces(
         configuration,
@@ -260,7 +258,6 @@ pub async fn get_all_project_role_template_bindings(
             }
         }
         Err(e) => {
-            log_api_error("get_all_project_role_template_bindings", &e);
             match e {
                 Error::ResponseError(response_content) => {
                     let msg = match response_content.status {
@@ -337,8 +334,6 @@ pub async fn get_project_role_template_bindings(
     match api_result {
         
         Ok(response_content) => {
-            trace!(status = %response_content.status, "Received API response");
-            
             match response_content.status {
                 StatusCode::OK => {
                     match serde_json::from_str::<IoCattleManagementv3ProjectRoleTemplateBindingList>(&response_content.content) {
@@ -378,34 +373,14 @@ pub async fn get_project_role_template_bindings(
             }
         }
         Err(e) => {
-            log_api_error("get_project_role_template_bindings", &e);
             match e {
                 Error::ResponseError(response_content) => {
                     let msg = match response_content.status {
-                        StatusCode::NOT_FOUND => {
-                            format!("Project role template bindings not found for cluster: {}", cluster_id)
-                        }
-                        StatusCode::UNAUTHORIZED => {
-                            format!(
-                                "Unauthorized access while trying to get project role template bindings for cluster: {}",
-                                cluster_id
-                            )
-                        }
-                        StatusCode::BAD_REQUEST => {
-                            format!(
-                                "Bad request while trying to get project role template bindings for cluster: {}. Request body was: {}",
-                                cluster_id, response_content.content
-                            )
-                        }
-                        StatusCode::FORBIDDEN => {
-                            format!(
-                                "Forbidden access while trying to get project role template bindings for cluster: {}",
-                                cluster_id
-                            )
-                        }
-                        _ => {
-                            format!("Failed to get project role template bindings for cluster: {}. Response: {:#?}", cluster_id, response_content)
-                        }
+                        StatusCode::NOT_FOUND => format!("Project role template bindings not found for cluster: {}", cluster_id),
+                        StatusCode::UNAUTHORIZED => format!( "Unauthorized access while trying to get project role template bindings for cluster: {}", cluster_id ) ,
+                        StatusCode::BAD_REQUEST => format!( "Bad request while trying to get project role template bindings for cluster: {}. Request body was: {}", cluster_id, response_content.content ) ,
+                        StatusCode::FORBIDDEN => format!( "Forbidden access while trying to get project role template bindings for cluster: {}", cluster_id ) ,
+                        _ => format!("Failed to get project role template bindings for cluster: {}. Response: {:#?}", cluster_id, response_content) ,
                     };
                     error!("{}", msg);
                     Err(anyhow::anyhow!(msg))
@@ -509,20 +484,13 @@ pub async fn get_namespaced_project_role_template_bindings(
             }
         }
         Err(e) => {
-            log_api_error("get_namespaced_project_role_template_bindings", &e);
             match e {
                 Error::ResponseError(response_content) => {
                 let msg = match response_content.status {
-                    StatusCode::NOT_FOUND => 
-                        format!("Project with ID: {} not found", project_id)
-                    ,
-                    StatusCode::FORBIDDEN => 
-                        format!("Forbidden access while trying to get project role template bindings for project: {}", project_id)
-                    ,
-                    _ => 
-                        format!("Failed to get project role template bindings for project: {}. Response: {:#?}", project_id, response_content),
-                    
-                    };
+                    StatusCode::NOT_FOUND => format!("Project with ID: {} not found", project_id) ,
+                    StatusCode::FORBIDDEN => format!("Forbidden access while trying to get project role template bindings for project: {}", project_id) ,
+                    _ => format!("Failed to get project role template bindings for project: {}. Response: {:#?}", project_id, response_content), 
+                };
                     error!("{}", msg);
                     Err(anyhow::anyhow!(msg))
                 },            
@@ -600,7 +568,6 @@ pub async fn update_project_role_template_binding(
     match api_result {
         
         Ok(response_content) => {
-            trace!(status = %response_content.status, "Received API response");
 
             match response_content.status {
                 StatusCode::OK => {
@@ -644,7 +611,6 @@ pub async fn update_project_role_template_binding(
             }
         }
         Err(e) => {
-            log_api_error("update_project_role_template_binding", &e);
             match e {
                 Error::ResponseError(response_error) => {
                     let msg = match response_error.status {
@@ -773,7 +739,6 @@ pub async fn delete_project_role_template_binding(
             }
         }
         Err(e) => {
-            log_api_error("delete_project_role_template_binding", &e);
             match e {
                 Error::ResponseError(response_error) => {
                     let msg = match response_error.status {

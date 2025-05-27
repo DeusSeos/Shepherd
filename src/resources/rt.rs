@@ -72,8 +72,6 @@ pub async fn create_role_template(
 
     match api_result {
         Ok(response_content) => {
-            trace!(status = %response_content.status, "Received API response");
-
             match response_content.status {
                 StatusCode::CREATED | StatusCode::OK => {
                     match serde_json::from_str::<IoCattleManagementv3RoleTemplate>(&response_content.content) {
@@ -116,7 +114,6 @@ pub async fn create_role_template(
             }
         }
         Err(e) => {
-            log_api_error("create_role_template", &e);
             match e {
                 Error::ResponseError(response_error) => {
                     let msg = match response_error.status {
@@ -161,8 +158,6 @@ pub async fn find_role_template(
     role_template_id: &str,
     resource_version: Option<&str>,
 ) -> Result<IoCattleManagementv3RoleTemplate> {
-    debug!("Reading role template with ID: {}", role_template_id);
-
     let api_result = read_management_cattle_io_v3_role_template(
         configuration,
         role_template_id,
@@ -215,7 +210,6 @@ pub async fn find_role_template(
             }
         }
         Err(e) => {
-            log_api_error("find_role_template", &e);
             match e {
                 Error::ResponseError(response_content) => {
                     let msg = match response_content.status {
@@ -344,7 +338,6 @@ pub async fn get_role_templates(
             }
         }
         Err(e) => {
-            log_api_error("get_role_templates", &e);
             match e {
                 Error::ResponseError(response_content) => {
                     let msg = match response_content.status {
@@ -461,7 +454,6 @@ pub async fn update_role_template(
             }
         }
         Err(e) => {
-            log_api_error("update_role_template", &e);
             match e {
                 Error::ResponseError(response_content) => {
                     let msg = match response_content.status {
@@ -559,7 +551,6 @@ pub async fn delete_role_template(
             }
         }
         Err(e) => {
-            log_api_error("delete_role_template", &e);
             match e {
                 Error::ResponseError(response_content) => {
                     let msg = match response_content.status {

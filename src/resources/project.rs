@@ -141,7 +141,6 @@ pub async fn create_project(
             }
         }
         Err(e) => {
-            log_api_error("create_project", &e);
             match e {
                 Error::ResponseError(response_content) => {
                     let msg = match response_content.status {
@@ -286,7 +285,6 @@ pub async fn get_projects(
             }
         }
         Err(e) => {
-            log_api_error("get_projects", &e);
             match e {
                 Error::ResponseError(response_content) => {
                     let msg = match response_content.status {
@@ -409,7 +407,6 @@ pub async fn find_project(
             }
         },
         Err(e) => {
-            log_api_error("find_project", &e);
             match e {
                 Error::ResponseError(response_content) => {
                     let msg = match response_content.status {
