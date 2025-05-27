@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use serde::{Deserialize, Serialize};
 use serde_diff::SerdeDiff;
@@ -20,9 +20,8 @@ use rancher_client::{
             list_management_cattle_io_v3_namespaced_project,
             patch_management_cattle_io_v3_namespaced_project,
             read_management_cattle_io_v3_namespaced_project,
-            DeleteManagementCattleIoV3NamespacedProjectError,
         },
-        Error, ResponseContent,
+        Error,
     },
     models::{
         self, IoCattleManagementv3Project, IoCattleManagementv3ProjectList,
@@ -35,7 +34,7 @@ use rancher_client::{
     },
 };
 use tokio::fs::{metadata, read_to_string};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{error, info, trace};
 
 use crate::{
     deserialize_object,
@@ -58,6 +57,140 @@ pub const PROJECT_EXCLUDE_PATHS: &[&str] = &[
     "spec.resourceQuota.usedLimit",
     "status",
 ];
+
+/// Create a project from a given configuration
+/// # Arguments
+/// * `configuration` - The configuration for the request
+/// * `cluster_id` - The ID of the cluster to create the project in
+/// * `body` - The project to create
+/// # Returns
+/// * `IoCattleManagementv3Project` - The project that was created
+/// # Errors
+/// * `anyhow::Error` - The error that occurred during the request
+///
+#[async_backtrace::framed]
+pub async fn create_project(
+    configuration: &Configuration,
+    cluster_id: &str,
+    body: IoCattleManagementv3Project,
+) -> Result<IoCattleManagementv3Project> {
+    let project_id = body.metadata.as_ref().unwrap().name.clone().unwrap();
+    info!(
+        "Creating project in cluster: {} with ID: {}",
+        cluster_id, project_id
+    );
+
+    let api_result = create_management_cattle_io_v3_namespaced_project(
+        configuration,
+        cluster_id,
+        body,
+        None,
+        None,
+        Some(crate::FULL_CLIENT_ID),
+        None,
+    )
+    .await;
+
+    trace!(api_result = ?api_result, "Received API response");
+
+    match api_result {
+        Ok(response_content) => {
+            match response_content.status {
+                StatusCode::CREATED | StatusCode::OK => {
+                    match serde_json::from_str::<IoCattleManagementv3Project>(
+                        &response_content.content,
+                    ) {
+                        Ok(data) => {
+                            info!(
+                                "Successfully created project with ID: {} for cluster: {}",
+                                project_id, cluster_id
+                            );
+                            Ok(data)
+                        }
+                        Err(deserialize_err) => {
+                            let err = format!(
+                                "Failed to deserialize project creation response: {}",
+                                deserialize_err
+                            );
+                            log_api_error("create_project", &err);
+                            Err(anyhow::anyhow!(err))
+                        }
+                    }
+                }
+                status => {
+                    // For other status codes, try to parse error details from response
+                    let err = match serde_json::from_str::<serde_json::Value>(
+                        &response_content.content,
+                    ) {
+                        Ok(error_obj) => {
+                            anyhow::anyhow!(
+                                "Unexpected status code {} when creating project with ID: {} in cluster {}: {}", 
+                                status, project_id, cluster_id, serde_json::to_string_pretty(&error_obj).unwrap_or_else(|_| response_content.content.clone())
+                            )
+                        }
+                        Err(_) => {
+                            anyhow::anyhow!(
+                                "Unexpected status code {} when creating project with ID: {} in cluster {}: {}", 
+                                status, project_id, cluster_id, response_content.content
+                            )
+                        }
+                    };
+                    log_api_error("create_project:unexpected_status", &err);
+                    Err(err)
+                }
+            }
+        }
+        Err(e) => {
+            log_api_error("create_project", &e);
+            match e {
+                Error::ResponseError(response_content) => {
+                    let msg = match response_content.status {
+                        StatusCode::NOT_FOUND => {
+                            format!("Cluster with ID: {} not found", cluster_id)
+                        }
+                        StatusCode::UNAUTHORIZED => {
+                            format!(
+                                "Unauthorized access while trying to create project with ID: {} in cluster: {}",
+                                project_id, cluster_id
+                            )
+                        }
+                        StatusCode::BAD_REQUEST => {
+                            format!(
+                                "Bad request when creating project with ID: {} in cluster: {}. Request body was: {}",
+                                project_id, cluster_id, response_content.content
+                            )
+                        }
+                        StatusCode::FORBIDDEN => {
+                            format!(
+                                "Forbidden to create project with ID: {} in cluster {}",
+                                project_id, cluster_id
+                            )
+                        }
+                        StatusCode::CONFLICT => {
+                            format!(
+                                "Project with ID: {} in cluster {} already exists",
+                                project_id, cluster_id
+                            )
+                        }
+                        _ => {
+                            format!("Failed to create project with ID: {} in cluster {}. Response: {:#?}", project_id, cluster_id, response_content)
+                        }
+                    };
+                    error!("{}", msg);
+                    Err(anyhow::anyhow!("{}", msg))
+                }
+                _ => {
+                    let msg = format!(
+                        "Failed to create project with ID: {} in cluster {}. Error: {:#?}",
+                        project_id, cluster_id, e
+                    );
+                    error!("{}", msg);
+                    Err(anyhow::anyhow!("{}", msg))
+                }
+            }
+        }
+    }
+}
 
 /// Get all projects for a given namespace (cluster_id) from an endpoint using the provided configuration
 ///
@@ -99,24 +232,19 @@ pub async fn get_projects(
         None,
         None,
     )
-    .await
-    .context(format!("Failed to get projects for cluster {}", cluster_id));
+    .await;
+
+    trace!(api_result = ?api_result, "Received API response");
 
     match api_result {
-        Err(e) => {
-            log_api_error("get_projects", &e);
-            Err(e)
-        }
         Ok(response_content) => {
-            trace!(status = %response_content.status, "Received API response");
-
             match response_content.status {
                 StatusCode::OK => {
                     match serde_json::from_str::<IoCattleManagementv3ProjectList>(
                         &response_content.content,
                     ) {
                         Ok(data) => {
-                            debug!(
+                            info!(
                                 "Successfully retrieved {} projects for cluster {}",
                                 data.items.len(),
                                 cluster_id
@@ -124,40 +252,16 @@ pub async fn get_projects(
                             Ok(data)
                         }
                         Err(deserialize_err) => {
-                            let err = anyhow::anyhow!(
+                            let msg = format!(
                                 "Failed to deserialize projects response: {}",
                                 deserialize_err
                             );
-                            log_api_error("get_projects:deserialize", &err);
-                            Err(err)
+                            error!(msg);
+                            Err(anyhow::anyhow!(msg))
                         }
                     }
                 }
-                StatusCode::UNAUTHORIZED => {
-                    let err = anyhow::anyhow!(
-                        "Unauthorized to get projects. Please check your credentials. Response: {}",
-                        response_content.content
-                    );
-                    log_api_error("get_projects:unauthorized", &err);
-                    Err(err)
-                }
-                StatusCode::NOT_FOUND => {
-                    let err = anyhow::anyhow!(
-                        "Cluster {} not found. Please check the cluster id. Response: {}",
-                        cluster_id,
-                        response_content.content
-                    );
-                    log_api_error("get_projects:not_found", &err);
-                    Err(err)
-                }
-                StatusCode::FORBIDDEN => {
-                    let err = anyhow::anyhow!(
-                        "Forbidden to get projects. Please check your roles. Response: {}",
-                        response_content.content
-                    );
-                    log_api_error("get_projects:forbidden", &err);
-                    Err(err)
-                }
+
                 status => {
                     // For other status codes, try to parse error details from response
                     let err = match serde_json::from_str::<serde_json::Value>(
@@ -178,6 +282,43 @@ pub async fn get_projects(
                     };
                     log_api_error("get_projects:unexpected_status", &err);
                     Err(err)
+                }
+            }
+        }
+        Err(e) => {
+            log_api_error("get_projects", &e);
+            match e {
+                Error::ResponseError(response_content) => {
+                    let msg = match response_content.status {
+                        StatusCode::NOT_FOUND => format!("Project list not found for cluster: {}", cluster_id),
+                        StatusCode::UNAUTHORIZED => format!(
+                            "Unauthorized access while trying to get project list for cluster: {}",
+                            cluster_id
+                        ),
+                        StatusCode::BAD_REQUEST => format!(
+                            "Bad request while trying to get project list for cluster: {}. Request body was: {}",
+                            cluster_id, response_content.content
+                        ),
+                        StatusCode::FORBIDDEN => format!(
+                            "Forbidden access while trying to get project list for cluster: {}",
+                            cluster_id
+                        ),
+                        _ => format!(
+                            "Failed to get project list for cluster: {}. Response: {:#?}",
+                            cluster_id, response_content
+                        ),
+                    };
+                    error!("{}", msg);
+                    Err(anyhow::anyhow!(msg))
+
+                },
+                _ => {
+                    let msg = format!(
+                        "Failed to get project list for cluster: {}. Error was: {:#?}",
+                        cluster_id, e
+                    );
+                    error!("{}", msg);
+                    Err(anyhow::anyhow!(msg))
                 }
             }
         }
@@ -206,10 +347,10 @@ pub async fn find_project(
     project_id: &str,
     resource_version: Option<&str>,
 ) -> Result<IoCattleManagementv3Project> {
-    debug!(
-        "Reading project with ID: {} from cluster: {}",
-        project_id, cluster_id
-    );
+    // debug!(
+    //     "Reading project with ID: {} from cluster: {}",
+    //     project_id, cluster_id
+    // );
 
     let api_result = read_management_cattle_io_v3_namespaced_project(
         configuration,
@@ -218,81 +359,93 @@ pub async fn find_project(
         None,
         resource_version,
     )
-    .await
-    .context(format!(
-        "Failed to find project with ID: {} in cluster: {}",
-        project_id, cluster_id
-    ));
+    .await;
+
+    trace!(api_result = ?api_result, "Received API response");
 
     match api_result {
-        Err(e) => {
-            log_api_error("find_project", &e);
-            Err(anyhow::anyhow!(e))
-        }
-        Ok(response_content) => {
-            trace!(status = %response_content.status, "Received API response");
-
-            match response_content.status {
-                StatusCode::OK => {
-                    match serde_json::from_str::<IoCattleManagementv3Project>(&response_content.content) {
-                        Ok(data) => {
-                            info!("Successfully found project with ID: {}", project_id);
-                            Ok(data)
-                        }
-                        Err(deserialize_err) => {
-                            let err = anyhow::anyhow!(
-                                "Failed to deserialize project response: {}",
-                                deserialize_err
-                            );
-                            log_api_error("find_project:deserialize", &err);
-                            Err(err)
-                        }
+        Ok(response_content) => match response_content.status {
+            StatusCode::OK => {
+                match serde_json::from_str::<IoCattleManagementv3Project>(&response_content.content)
+                {
+                    Ok(data) => {
+                        info!("Successfully found project with ID: {}", project_id);
+                        Ok(data)
+                    }
+                    Err(deserialize_err) => {
+                        let err = anyhow::anyhow!(
+                            "Failed to deserialize project response: {}",
+                            deserialize_err
+                        );
+                        log_api_error("find_project:deserialize", &err);
+                        Err(err)
                     }
                 }
-                StatusCode::NOT_FOUND => {
-                    let err = anyhow::anyhow!(
-                        "Project with ID: {} not found. Response: {}",
-                        project_id,
-                        response_content.content
-                    );
-                    log_api_error("find_project:not_found", &err);
-                    Err(err)
-                }
-                StatusCode::UNAUTHORIZED => {
-                    let err = anyhow::anyhow!(
-                        "Unauthorized access while trying to find project with ID: {}. Response: {}",
-                        project_id,
-                        response_content.content
-                    );
-                    log_api_error("find_project:unauthorized", &err);
-                    Err(err)
-                }
-                StatusCode::FORBIDDEN => {
-                    let err = anyhow::anyhow!(
-                        "Forbidden access while trying to find project with ID: {}. Response: {}",
-                        project_id,
-                        response_content.content
-                    );
-                    log_api_error("find_project:forbidden", &err);
-                    Err(err)
-                }
-                status => {
-                    let err = match serde_json::from_str::<serde_json::Value>(&response_content.content) {
-                        Ok(error_obj) => {
-                            anyhow::anyhow!(
-                                "Unexpected status code {} when finding project with ID: {}: {}",
-                                status, project_id, serde_json::to_string_pretty(&error_obj).unwrap_or_else(|_| response_content.content.clone())
+            }
+
+            status => {
+                let err = match serde_json::from_str::<serde_json::Value>(&response_content.content)
+                {
+                    Ok(error_obj) => {
+                        anyhow::anyhow!(
+                            "Unexpected status code {} when finding project with ID: {}: {}",
+                            status,
+                            project_id,
+                            serde_json::to_string_pretty(&error_obj)
+                                .unwrap_or_else(|_| response_content.content.clone())
+                        )
+                    }
+                    Err(_) => {
+                        anyhow::anyhow!(
+                            "Unexpected status code {} when finding project with ID: {}: {}",
+                            status,
+                            project_id,
+                            response_content.content
+                        )
+                    }
+                };
+                log_api_error("find_project:unexpected_status", &err);
+                Err(err)
+            }
+        },
+        Err(e) => {
+            log_api_error("find_project", &e);
+            match e {
+                Error::ResponseError(response_content) => {
+                    let msg = match response_content.status {
+                        StatusCode::NOT_FOUND => {
+                            format!(
+                                "Project with ID: {} not found for cluster: {}",
+                                project_id, cluster_id
                             )
                         }
-                        Err(_) => {
-                            anyhow::anyhow!(
-                                "Unexpected status code {} when finding project with ID: {}: {}",
-                                status, project_id, response_content.content
-                            )
+                        StatusCode::UNAUTHORIZED => {
+                            format!(
+                            "Unauthorized access while trying to get project with ID: {} for cluster: {}",
+                            project_id,
+                            cluster_id
+                        )
+                        }
+                        StatusCode::BAD_REQUEST => {
+                            format!(
+                        "Bad request while trying to get project with ID: {} for cluster: {}. Request body was: {}",
+                            project_id, cluster_id, response_content.content
+                        )
+                        }
+                        _ => {
+                            format!("Failed to get project with ID: {} for cluster: {}. Response: {:#?}", project_id, cluster_id, response_content)
                         }
                     };
-                    log_api_error("find_project:unexpected_status", &err);
-                    Err(err)
+                    error!("{}", msg);
+                    Err(anyhow::anyhow!("{}", msg))
+                }
+                _ => {
+                    let msg = format!(
+                        "Failed to get project with ID: {} for cluster: {}. Error: {:#?}",
+                        project_id, cluster_id, e
+                    );
+                    error!("{}", msg);
+                    Err(anyhow::anyhow!(msg))
                 }
             }
         }
@@ -317,11 +470,6 @@ pub async fn update_project(
     project_id: &str,
     patch_value: Value,
 ) -> Result<IoCattleManagementv3Project> {
-    info!(
-        "Patching project with ID: {} in cluster: {}",
-        project_id, cluster_id
-    );
-
     let patch_array = match patch_value {
         Value::Array(arr) => arr,
         Value::Null => {
@@ -335,33 +483,36 @@ pub async fn update_project(
                 "Expected patch to serialize to a JSON array, but got: {:?}",
                 patch_value
             );
-            return Err(anyhow::anyhow!("Expected patch to serialize to a JSON array"));
+            return Err(anyhow::anyhow!(
+                "Expected patch to serialize to a JSON array"
+            ));
         }
     };
 
     let k8s_patch = IoK8sApimachineryPkgApisMetaV1Patch::Array(patch_array);
 
-    let result = patch_management_cattle_io_v3_namespaced_project(
+    let api_result = patch_management_cattle_io_v3_namespaced_project(
         configuration,
         project_id,
         cluster_id,
         Some(k8s_patch),
         None,
         None,
-        None,
+        Some(crate::FULL_CLIENT_ID),
         None,
         None,
     )
     .await;
 
-    match result {
-        Err(e) => {
-            error!("Failed to patch project: {}", e);
-            Err(anyhow::anyhow!(e))
-        }
+    trace!(api_result = ?api_result, "Received API response");
+
+    match api_result {
         Ok(response_content) => match response_content.status {
             StatusCode::OK => {
-                info!("Successfully patched project with ID: {}", project_id);
+                info!(
+                    "Successfully patched project with ID: {} in cluster: {}",
+                    project_id, cluster_id
+                );
                 match serde_json::from_str(&response_content.content) {
                     Ok(data) => Ok(data),
                     Err(deserialize_err) => {
@@ -370,112 +521,158 @@ pub async fn update_project(
                     }
                 }
             }
-            StatusCode::NOT_FOUND => {
-                error!("Project with ID: {} not found", project_id);
-                Err(anyhow::anyhow!("Project with ID: {} not found", project_id))
-            }
-            StatusCode::UNAUTHORIZED => {
-                error!(
-                    "Unauthorized access while trying to patch project with ID: {}",
-                    project_id
-                );
-                Err(anyhow::anyhow!(
-                    "Unauthorized access while trying to patch project with ID: {}",
-                    project_id
-                ))
-            }
-            StatusCode::BAD_REQUEST => {
-                error!(
-                    "Bad request when updating project with ID: {}. Request body was: {}",
-                    project_id, response_content.content
-                );
-                Err(anyhow::anyhow!(
-                    "Bad request when updating project with ID: {}. Request body was: {}",
-                    project_id, response_content.content
-                ))
-            }
-            StatusCode::FORBIDDEN => {
-                error!("Forbidden to patch project with ID: {}", project_id);
-                Err(anyhow::anyhow!("Forbidden to patch project with ID: {}", project_id))
-            }
             _ => {
-                error!(
-                    "Received unexpected status code: {}",
-                    response_content.status
-                );
-                Err(anyhow::anyhow!("Received unexpected status code: {}", response_content.status))
+                let msg = format!(
+                        "Received unexpected status code: {} when patching project with ID: {} in cluster: {}",
+                        response_content.status, project_id, cluster_id
+                    );
+                error!(msg);
+                Err(anyhow::anyhow!(msg))
             }
         },
-    }
-}
-
-/// Create a project from a given configuration
-/// # Arguments
-/// * `configuration` - The configuration for the request
-/// * `cluster_id` - The ID of the cluster to create the project in
-/// * `body` - The project to create
-/// # Returns
-/// * `IoCattleManagementv3Project` - The project that was created
-/// # Errors
-/// * `anyhow::Error` - The error that occurred during the request
-///
-#[async_backtrace::framed]
-pub async fn create_project(
-    configuration: &Configuration,
-    cluster_id: &str,
-    body: IoCattleManagementv3Project,
-) -> Result<IoCattleManagementv3Project> {
-    let project_id = body.metadata.as_ref().unwrap().name.clone().unwrap();
-    info!(
-        "Creating project in cluster: {} with ID: {}",
-        cluster_id, project_id
-    );
-
-    let result = create_management_cattle_io_v3_namespaced_project(
-        configuration,
-        cluster_id,
-        body,
-        None,
-        None,
-        Some(crate::FULL_CLIENT_ID),
-        None,
-    )
-    .await;
-
-    match result {
-        Ok(response_content) => {
-            info!("Successfully created project with ID: {}", project_id);
-            match serde_json::from_str(&response_content.content) {
-                Ok(data) => Ok(data),
-                Err(deserialize_err) => {
-                    error!("Failed to deserialize response: {}", deserialize_err);
-                    Err(anyhow::anyhow!(deserialize_err))
+        Err(e) => {
+            match e {
+                Error::ResponseError(response_content) => {
+                    let msg = match response_content.status {
+                        StatusCode::UNPROCESSABLE_ENTITY => {
+                            format!(
+                                "Unprocessable entity when updating project with ID: {} in cluster: {}. Response: {:#?}",
+                                project_id, cluster_id, response_content.content
+                            )
+                        }
+                        StatusCode::NOT_FOUND => {
+                            format!(
+                                "Project with ID: {} in cluster: {} not found",
+                                project_id, cluster_id
+                            )
+                        }
+                        StatusCode::UNAUTHORIZED => {
+                            format!(
+                                "Unauthorized access while trying to patch project with ID: {} in cluster: {}",
+                                project_id, cluster_id
+                            )
+                        }
+                        StatusCode::BAD_REQUEST => {
+                            format!(
+                                "Bad request when updating project with ID: {} in cluster: {}. Request body was: {}",
+                                project_id, cluster_id, response_content.content
+                            )
+                        }
+                        _ => {
+                            format!(
+                                "Failed to patch project with ID: {} in cluster: {}. Response: {:#?}",
+                                project_id, cluster_id, response_content
+                            )
+                        }
+                    };
+                    error!(msg);
+                    Err(anyhow::anyhow!(msg))
+                }
+                _ => {
+                    let msg = format!(
+                        "Failed to patch project with ID: {} in cluster: {}. Error: {:#?}",
+                        project_id, cluster_id, e
+                    );
+                    error!(msg);
+                    Err(anyhow::anyhow!(msg))
                 }
             }
         }
-        Err(Error::ResponseError(resp)) => {
-            match resp.status {
-                StatusCode::CONFLICT => {
-                    warn!("Failed to create project, conflict occurred");
-                    Err(anyhow::anyhow!("Project creation conflict: {}", resp.content))
-                }
-                StatusCode::UNAUTHORIZED => {
-                    error!("Unauthorized to create project");
-                    Err(anyhow::anyhow!("Unauthorized to create project"))
-                }
-                StatusCode::FORBIDDEN => {
-                    error!("Forbidden to create project");
-                    Err(anyhow::anyhow!("Forbidden to create project"))
+    }
+}
+
+/// Delete a project by its ID  
+/// # Arguments  
+/// * `configuration` - The configuration to use for the request  
+/// * `cluster_id` - The ID of the cluster (namespace) containing the project  
+/// * `project_id` - The ID of the project to delete  
+/// # Returns  
+/// * `IoCattleManagementv3Project` - The deleted project  
+/// # Errors  
+/// * `Error<DeleteManagementCattleIoV3NamespacedProjectError>` - The error that occurred while trying to delete the project  
+#[async_backtrace::framed]
+pub async fn delete_project(
+    configuration: &Configuration,
+    cluster_id: &str,
+    project_id: &str,
+) -> Result<Result<IoCattleManagementv3Project, IoK8sApimachineryPkgApisMetaV1Status>> {
+    info!(
+        "Deleting project with ID: {} in cluster: {}",
+        project_id, cluster_id
+    );
+    let api_result = delete_management_cattle_io_v3_namespaced_project(
+        configuration,
+        project_id,
+        cluster_id,
+        None, // pretty
+        None, // dry_run
+        None, // grace_period_seconds
+        None, // orphan_dependents
+        None, // propagation_policy
+        None, // body
+    )
+    .await;
+
+    trace!(api_result = ?api_result, "Received API response");
+
+    match api_result {
+        Ok(response_content) => {
+            trace!("Response: {}", response_content.content);
+            match response_content.status {
+                StatusCode::OK => {
+                    info!("Successfully deleted project with ID: {}", project_id);
+                    // Try to deserialize as Project first
+                    match serde_json::from_str::<IoCattleManagementv3Project>(
+                        &response_content.content,
+                    ) {
+                        Ok(project) => Ok(Ok(project)),
+                        Err(_) => {
+                            // If that fails, try to deserialize as Status
+                            match serde_json::from_str::<IoK8sApimachineryPkgApisMetaV1Status>(
+                                &response_content.content,
+                            ) {
+                                Ok(status) => Ok(Err(status)),
+                                Err(deserialize_err) => {
+                                    error!("Failed to deserialize response as either Project or Status: {}", deserialize_err);
+                                    Err(anyhow::anyhow!(deserialize_err))
+                                }
+                            }
+                        }
+                    }
                 }
                 _ => {
-                    error!("API error: {} - {}", resp.status, resp.content);
-                    Err(anyhow::anyhow!("API error: {} - {}", resp.status, resp.content))
+                    error!(
+                        "Received unexpected status code: {}",
+                        response_content.status
+                    );
+                    Err(anyhow::anyhow!(
+                        "Received unexpected status code: {}",
+                        response_content.status
+                    ))
                 }
             }
         }
         Err(e) => {
-            error!("Request error: {}", e);
-            Err(anyhow::anyhow!("Request error: {}", e))
+            match e {
+                Error::ResponseError(response_content) => {
+                    let msg = match response_content.status {
+                        StatusCode::NOT_FOUND => format!( "Project with ID: {} in cluster {} not found", project_id, cluster_id ),
+                        StatusCode::UNAUTHORIZED => format!( "Unauthorized access while trying to delete project with ID: {} in cluster {}", project_id, cluster_id ),
+                        StatusCode::BAD_REQUEST => format!( "Bad request when deleting project with ID: {} in cluster {}. Request body was: {}", project_id, cluster_id, response_content.content ),
+                        _ => format!( "Failed to delete project with ID: {} in cluster {}. Response: {:#?}", project_id, cluster_id, response_content ),
+                    };
+                    error!("{}", msg);
+                    Err(anyhow::anyhow!("{}", msg))
+                }
+                _ => {
+                    let msg = format!(
+                        "Failed to patch project with ID: {} in cluster {}. Error: {:#?}",
+                        project_id, cluster_id, e
+                    );
+                    error!(msg);
+                    Err(anyhow::anyhow!(msg))
+                }
+            }
         }
     }
 }
@@ -534,125 +731,6 @@ pub async fn load_project(
         .map_err(|e| format!("Failed to read file {:?}: {}", project_file, e))?;
 
     Ok(deserialize_object(&content, &file_format)?)
-}
-
-/// Delete a project by its ID  
-/// # Arguments  
-/// * `configuration` - The configuration to use for the request  
-/// * `cluster_id` - The ID of the cluster (namespace) containing the project  
-/// * `project_id` - The ID of the project to delete  
-/// # Returns  
-/// * `IoCattleManagementv3Project` - The deleted project  
-/// # Errors  
-/// * `Error<DeleteManagementCattleIoV3NamespacedProjectError>` - The error that occurred while trying to delete the project  
-#[async_backtrace::framed]
-pub async fn delete_project(
-    configuration: &Configuration,
-    cluster_id: &str,
-    project_id: &str,
-) -> Result<
-    Result<IoCattleManagementv3Project, IoK8sApimachineryPkgApisMetaV1Status>,
-    Error<DeleteManagementCattleIoV3NamespacedProjectError>,
-> {
-    info!(
-        "Deleting project with ID: {} in cluster: {}",
-        project_id, cluster_id
-    );
-    let result = delete_management_cattle_io_v3_namespaced_project(
-        configuration,
-        project_id,
-        cluster_id,
-        None, // pretty
-        None, // dry_run
-        None, // grace_period_seconds
-        None, // orphan_dependents
-        None, // propagation_policy
-        None, // body
-    )
-    .await;
-
-    match result {
-        Err(e) => {
-            error!("Failed to delete project: {}", e);
-            return Err(e);
-        }
-        Ok(response_content) => {
-            trace!("Response: {}", response_content.content);
-            match response_content.status {
-                StatusCode::OK => {
-                    info!("Successfully deleted project with ID: {}", project_id);
-                    // Try to deserialize as Project first
-                    match serde_json::from_str::<IoCattleManagementv3Project>(
-                        &response_content.content,
-                    ) {
-                        Ok(project) => Ok(Ok(project)),
-                        Err(_) => {
-                            // If that fails, try to deserialize as Status
-                            match serde_json::from_str::<IoK8sApimachineryPkgApisMetaV1Status>(
-                                &response_content.content,
-                            ) {
-                                Ok(status) => Ok(Err(status)),
-                                Err(deserialize_err) => {
-                                    error!("Failed to deserialize response as either Project or Status: {}", deserialize_err);
-                                    Err(Error::Serde(deserialize_err))
-                                }
-                            }
-                        }
-                    }
-                }
-                StatusCode::NOT_FOUND => {
-                    error!("Project with ID: {} not found", project_id);
-                    Err(Error::ResponseError(ResponseContent {
-                        status: response_content.status,
-                        content: response_content.content,
-                        entity: None,
-                    }))
-                }
-                StatusCode::UNAUTHORIZED => {
-                    error!("Unauthorized to delete project with ID: {}", project_id);
-                    Err(Error::ResponseError(ResponseContent {
-                        status: response_content.status,
-                        content: response_content.content,
-                        entity: None,
-                    }))
-                }
-                StatusCode::FORBIDDEN => {
-                    error!("Forbidden to delete project with ID: {}", project_id);
-                    Err(Error::ResponseError(ResponseContent {
-                        status: response_content.status,
-                        content: response_content.content,
-                        entity: None,
-                    }))
-                }
-                _ => {
-                    error!(
-                        "Received unexpected status code: {}",
-                        response_content.status
-                    );
-                    let unknown_data =
-                        match serde_json::from_str::<Value>(&response_content.content) {
-                            Ok(val) => val,
-                            Err(deserialize_err) => {
-                                error!(
-                                    "Failed to deserialize unknown response content: {}",
-                                    deserialize_err
-                                );
-                                return Err(Error::Serde(deserialize_err));
-                            }
-                        };
-                    Err(Error::ResponseError(ResponseContent {
-                        status: response_content.status,
-                        content: response_content.content,
-                        entity: Some(
-                            DeleteManagementCattleIoV3NamespacedProjectError::UnknownValue(
-                                unknown_data,
-                            ),
-                        ),
-                    }))
-                }
-            }
-        }
-    }
 }
 
 #[derive(Serialize, Deserialize, SerdeDiff, Debug, Clone, PartialEq)]
@@ -754,7 +832,7 @@ impl TryFrom<IoCattleManagementv3Project> for Project {
         let metadata = value
             .metadata
             .ok_or_else(|| anyhow::anyhow!("Missing metadata field"))?;
-        
+
         let spec = value
             .spec
             .ok_or_else(|| anyhow::anyhow!("Missing spec field"))?;

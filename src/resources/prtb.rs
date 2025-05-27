@@ -1,7 +1,8 @@
+
 use serde::{Deserialize, Serialize};
 
 use crate::{utils::logging::log_api_error, models::ResourceVersionMatch};
-use anyhow::{Context as anyhow_context, Result};
+use anyhow::Result;
 
 use reqwest::StatusCode;
 
@@ -13,9 +14,9 @@ use rancher_client::{
             delete_management_cattle_io_v3_namespaced_project_role_template_binding,
             list_management_cattle_io_v3_namespaced_project_role_template_binding,
             list_management_cattle_io_v3_project_role_template_binding_for_all_namespaces,
-            patch_management_cattle_io_v3_namespaced_project_role_template_binding, ListManagementCattleIoV3NamespacedProjectRoleTemplateBindingError
+            patch_management_cattle_io_v3_namespaced_project_role_template_binding
         },
-        Error, ResponseContent,
+        Error,
     },
     models::{
         IoCattleManagementv3ProjectRoleTemplateBinding,
@@ -36,375 +37,6 @@ pub const PRTB_EXCLUDE_PATHS: &[&str] = &[
     "metadata.selfLink",
     "metadata.uid",
 ];
-
-#[async_backtrace::framed]
-pub async fn get_project_role_template_bindings(
-    configuration: &Configuration,
-    cluster_id: &str,
-    field_selector: Option<&str>,
-    label_selector: Option<&str>,
-    limit: Option<i32>,
-    resource_version: Option<&str>,
-    resource_version_match: Option<&str>,
-    continue_: Option<&str>,
-) -> Result<IoCattleManagementv3ProjectRoleTemplateBindingList> {
-    debug!("Getting project role template bindings for cluster: {}", cluster_id);
-
-    let api_result = list_management_cattle_io_v3_namespaced_project_role_template_binding(
-        configuration,
-        cluster_id,
-        None,
-        None,
-        continue_,
-        field_selector,
-        label_selector,
-        limit,
-        resource_version,
-        resource_version_match,
-        None,
-        None,
-        None,
-    )
-    .await
-    .context(format!(
-        "Failed to get project role template bindings for cluster: {}",
-        cluster_id
-    ));
-
-    match api_result {
-        Err(e) => {
-            log_api_error("get_project_role_template_bindings", &e);
-            Err(anyhow::anyhow!(e))
-        }
-        Ok(response_content) => {
-            trace!(status = %response_content.status, "Received API response");
-            
-            match response_content.status {
-                StatusCode::OK => {
-                    match serde_json::from_str::<IoCattleManagementv3ProjectRoleTemplateBindingList>(&response_content.content) {
-                        Ok(data) => {
-                            debug!("Successfully retrieved {} project role template bindings for cluster: {}", data.items.len(), cluster_id);
-                            Ok(data)
-                        },
-                        Err(deserialize_err) => {
-                            let err = anyhow::anyhow!("Failed to deserialize project role template bindings response: {}", deserialize_err);
-                            log_api_error("get_project_role_template_bindings:deserialize", &err);
-                            Err(err)
-                        }
-                    }
-                },
-                StatusCode::UNAUTHORIZED => {
-                    let err = anyhow::anyhow!(
-                        "Unauthorized to get project role template bindings for cluster: {}. Response: {}",
-                        cluster_id,
-                        response_content.content
-                    );
-                    log_api_error("get_project_role_template_bindings:unauthorized", &err);
-                    Err(err)
-                }
-                StatusCode::FORBIDDEN => {
-                    let err = anyhow::anyhow!(
-                        "Forbidden to get project role template bindings for cluster: {}. Response: {}",
-                        cluster_id,
-                        response_content.content
-                    );
-                    log_api_error("get_project_role_template_bindings:forbidden", &err);
-                    Err(err)
-                }
-                status => {
-                    let err = match serde_json::from_str::<serde_json::Value>(&response_content.content) {
-                        Ok(error_obj) => {
-                            anyhow::anyhow!(
-                                "Unexpected status code {} when getting project role template bindings for cluster: {}: {}", 
-                                status, 
-                                cluster_id,
-                                serde_json::to_string_pretty(&error_obj).unwrap_or_else(|_| response_content.content.clone())
-                            )
-                        }
-                        Err(_) => {
-                            anyhow::anyhow!(
-                                "Unexpected status code {} when getting project role template bindings for cluster: {}: {}", 
-                                status, 
-                                cluster_id,
-                                response_content.content
-                            )
-                        }
-                    };
-                    log_api_error("get_project_role_template_bindings:unexpected_status", &err);
-                    Err(err)
-                }
-            }
-        }
-    }
-}
-
-/// Get all project role template bindings from a namespace using the provided configuration
-///
-/// # Arguments
-///
-/// * `configuration` - The configuration to use for the request
-/// * `project_id` - The ID of the project (namespace) to get the role template bindings for
-/// * `field_selector` - If specified, selects only the specified fields of the bindings
-/// * `label_selector` - If specified, selects only the bindings with the specified labels
-/// * `limit` - If specified, limits the number of bindings returned
-/// * `resource_version` - If specified, only returns bindings with a resource version greater than the specified version
-/// * `resource_version_match` - If specified, only returns bindings with a resource version that matches the specified version
-/// * `continue_` - If specified, continues the listing from the last binding returned in the previous response
-///
-/// # Returns
-///
-/// * `IoCattleManagementv3ProjectRoleTemplateBindingList` - The list of project role template bindings
-///
-/// # Errors
-///
-/// * `Error<ListManagementCattleIoV3NamespacedProjectRoleTemplateBindingError>` - The error that occurred while trying to get the bindings
-#[async_backtrace::framed]
-pub async fn get_namespaced_project_role_template_bindings(
-    configuration: &Configuration,
-    project_id: &str,
-    field_selector: Option<&str>,
-    label_selector: Option<&str>,
-    limit: Option<i32>,
-    resource_version: Option<&str>,
-    resource_version_match: Option<&str>,
-    continue_: Option<&str>,
-) -> Result<
-    IoCattleManagementv3ProjectRoleTemplateBindingList,
-    Error<ListManagementCattleIoV3NamespacedProjectRoleTemplateBindingError>,
-> {
-    debug!(
-        "Fetching project role template bindings for project_id: {}, with filters - field_selector: {:?}, label_selector: {:?}, limit: {:?}, resource_version: {:?}, resource_version_match: {:?}, continue: {:?}",
-        project_id, field_selector, label_selector, limit, resource_version, resource_version_match, continue_
-    );
-
-    let result = list_management_cattle_io_v3_namespaced_project_role_template_binding(
-        configuration,
-        project_id,
-        None,
-        None,
-        continue_,
-        field_selector,
-        label_selector,
-        limit,
-        resource_version,
-        resource_version_match,
-        None,
-        None,
-        None,
-    )
-    .await;
-
-    match result {
-        Err(e) => {
-            error!("Failed to fetch project role template bindings: {}", e);
-            Err(e)
-        }
-        Ok(response_content) => {
-            trace!("Received response: {:?}", response_content);
-
-            match response_content.status {
-                StatusCode::OK => match serde_json::from_str(&response_content.content) {
-                    Ok(data) => {
-                        debug!("Successfully deserialized response content");
-                        Ok(data)
-                    }
-                    Err(deserialize_err) => {
-                        error!("Deserialization error: {}", deserialize_err);
-                        Err(Error::Serde(deserialize_err))
-                    }
-                },
-                StatusCode::NOT_FOUND => {
-                    error!("The project role template bindings were not found");
-                    Err(Error::ResponseError(ResponseContent {
-                        status: response_content.status,
-                        content: response_content.content,
-                        entity: None,
-                    }))
-                }
-                StatusCode::UNAUTHORIZED => {
-                    error!("You are not authorized to access the project role template bindings");
-                    Err(Error::ResponseError(ResponseContent {
-                        status: response_content.status,
-                        content: response_content.content,
-                        entity: None,
-                    }))
-                }
-                StatusCode::FORBIDDEN => {
-                    error!("You do not have permission to access the project role template bindings");
-                    Err(Error::ResponseError(ResponseContent {
-                        status: response_content.status,
-                        content: response_content.content,
-                        entity: None,
-                    }))
-                }
-                _ => match serde_json::from_str::<serde_json::Value>(&response_content.content) {
-                    Ok(unknown_data) => {
-                        error!("Received unknown response status: {}", response_content.status);
-                        Err(Error::ResponseError(ResponseContent {
-                            status: response_content.status,
-                            content: response_content.content,
-                            entity: Some(ListManagementCattleIoV3NamespacedProjectRoleTemplateBindingError::UnknownValue(
-                                unknown_data,
-                            )),
-                        }))
-                    }
-                    Err(deserialize_err) => {
-                        error!("Deserialization error for unknown response: {}", deserialize_err);
-                        Err(Error::Serde(deserialize_err))
-                    }
-                },
-            }
-        }
-    }
-}
-
-/// Update a project role template binding
-///
-/// # Arguments
-///
-/// * `configuration` - The configuration to use for the request
-/// * `cluster_id` - The cluster ID
-/// * `prtb_id` - The project role template binding ID
-/// * `patch_value` - The JSON patch to apply
-/// # Returns
-///
-/// * `IoCattleManagementv3ProjectRoleTemplateBinding` - The updated project role template binding
-/// # Errors
-///
-/// * `anyhow::Error` - The error that occurred while trying to update the project role template binding
-///
-#[async_backtrace::framed]
-pub async fn update_project_role_template_binding(
-    configuration: &Configuration,
-    cluster_id: &str,
-    prtb_id: &str,
-    patch_value: Value,
-) -> Result<IoCattleManagementv3ProjectRoleTemplateBinding> {
-    info!("Patching project role template binding with ID: {} in cluster: {}", prtb_id, cluster_id);
-
-    let patch_array = match patch_value {
-        Value::Array(arr) => arr,
-        Value::Null => {
-            let err = anyhow::anyhow!("Expected patch to serialize to a JSON array, but got null");
-            log_api_error("update_project_role_template_binding:invalid_patch", &err);
-            return Err(err);
-        }
-        _ => {
-            let err = anyhow::anyhow!(
-                "Expected patch to serialize to a JSON array, but got: {:?}",
-                patch_value
-            );
-            log_api_error("update_project_role_template_binding:invalid_patch", &err);
-            return Err(err);
-        }
-    };
-
-    let k8s_patch = IoK8sApimachineryPkgApisMetaV1Patch::Array(patch_array);
-
-    let result = patch_management_cattle_io_v3_namespaced_project_role_template_binding(
-        configuration,
-        cluster_id,
-        prtb_id,
-        Some(k8s_patch),
-        None,
-        None,
-        None,
-        None,
-        None
-    )
-    .await
-    .context(format!(
-        "Failed to update project role template binding with ID: {} in cluster: {}",
-        prtb_id, cluster_id
-    ));
-
-    match result {
-        Err(e) => {
-            log_api_error("update_project_role_template_binding", &e);
-            Err(anyhow::anyhow!(e))
-        }
-        Ok(response_content) => {
-            trace!(status = %response_content.status, "Received API response");
-
-            match response_content.status {
-                StatusCode::OK => {
-                    match serde_json::from_str::<IoCattleManagementv3ProjectRoleTemplateBinding>(&response_content.content) {
-                        Ok(data) => {
-                            info!("Successfully updated project role template binding with ID: {}", prtb_id);
-                            Ok(data)
-                        }
-                        Err(deserialize_err) => {
-                            let err = anyhow::anyhow!(
-                                "Failed to deserialize project role template binding update response: {}",
-                                deserialize_err
-                            );
-                            log_api_error("update_project_role_template_binding:deserialize", &err);
-                            Err(err)
-                        }
-                    }
-                }
-                StatusCode::NOT_FOUND => {
-                    let err = anyhow::anyhow!(
-                        "Project role template binding with ID: {} not found for update. Response: {}",
-                        prtb_id,
-                        response_content.content
-                    );
-                    log_api_error("update_project_role_template_binding:not_found", &err);
-                    Err(err)
-                }
-                StatusCode::UNAUTHORIZED => {
-                    let err = anyhow::anyhow!(
-                        "Unauthorized to update project role template binding with ID: {}. Response: {}",
-                        prtb_id,
-                        response_content.content
-                    );
-                    log_api_error("update_project_role_template_binding:unauthorized", &err);
-                    Err(err)
-                }
-                StatusCode::FORBIDDEN => {
-                    let err = anyhow::anyhow!(
-                        "Forbidden to update project role template binding with ID: {}. Response: {}",
-                        prtb_id,
-                        response_content.content
-                    );
-                    log_api_error("update_project_role_template_binding:forbidden", &err);
-                    Err(err)
-                }
-                StatusCode::CONFLICT => {
-                    let err = anyhow::anyhow!(
-                        "Conflict when updating project role template binding with ID: {}. Response: {}",
-                        prtb_id,
-                        response_content.content
-                    );
-                    log_api_error("update_project_role_template_binding:conflict", &err);
-                    Err(err)
-                }
-                status => {
-                    let err = match serde_json::from_str::<serde_json::Value>(&response_content.content) {
-                        Ok(error_obj) => {
-                            anyhow::anyhow!(
-                                "Unexpected status code {} when updating project role template binding with ID: {}: {}", 
-                                status, 
-                                prtb_id,
-                                serde_json::to_string_pretty(&error_obj).unwrap_or_else(|_| response_content.content.clone())
-                            )
-                        }
-                        Err(_) => {
-                            anyhow::anyhow!(
-                                "Unexpected status code {} when updating project role template binding with ID: {}: {}", 
-                                status, 
-                                prtb_id,
-                                response_content.content
-                            )
-                        }
-                    };
-                    log_api_error("update_project_role_template_binding:unexpected_status", &err);
-                    Err(err)
-                }
-            }
-        }
-    }
-}
 
 
 /// Create a project role template binding
@@ -430,37 +62,29 @@ pub async fn create_project_role_template_binding(
     let prtb_id = body.metadata.as_ref().unwrap().name.clone().unwrap_or_default();
     
     info!("Creating project role template binding with ID: {} for project: {}", 
-          prtb_id, project_id);
+        prtb_id, project_id);
 
-    let result = create_management_cattle_io_v3_namespaced_project_role_template_binding(
+    let api_result = create_management_cattle_io_v3_namespaced_project_role_template_binding(
         configuration,
         project_id,
         body,
         None,
         None,
-        None,
+        Some(crate::FULL_CLIENT_ID),
         None,
     )
-    .await
-    .context(format!(
-        "Failed to create project role template binding with ID: {} for project: {}",
-        prtb_id, project_id
-    ));
+    .await;
+    
+    trace!(api_result = ?api_result, "Received API response");
 
-    match result {
-        Err(e) => {
-            log_api_error("create_project_role_template_binding", &e);
-            Err(anyhow::anyhow!(e))
-        }
+    match api_result {
         Ok(response_content) => {
-            trace!(status = %response_content.status, "Received API response");
-
             match response_content.status {
                 StatusCode::CREATED | StatusCode::OK => {
                     match serde_json::from_str::<IoCattleManagementv3ProjectRoleTemplateBinding>(&response_content.content) {
                         Ok(data) => {
                             info!("Successfully created project role template binding with ID: {} for project: {}", 
-                                  prtb_id, project_id);
+                                prtb_id, project_id);
                             Ok(data)
                         }
                         Err(deserialize_err) => {
@@ -472,34 +96,6 @@ pub async fn create_project_role_template_binding(
                             Err(err)
                         }
                     }
-                }
-                StatusCode::UNAUTHORIZED => {
-                    let err = anyhow::anyhow!(
-                        "Unauthorized to create project role template binding for project: {}. Response: {}",
-                        project_id,
-                        response_content.content
-                    );
-                    log_api_error("create_project_role_template_binding:unauthorized", &err);
-                    Err(err)
-                }
-                StatusCode::FORBIDDEN => {
-                    let err = anyhow::anyhow!(
-                        "Forbidden to create project role template binding for project: {}. Response: {}",
-                        project_id,
-                        response_content.content
-                    );
-                    log_api_error("create_project_role_template_binding:forbidden", &err);
-                    Err(err)
-                }
-                StatusCode::CONFLICT => {
-                    let err = anyhow::anyhow!(
-                        "Conflict when creating project role template binding with ID: {} for project: {}. Response: {}",
-                        prtb_id,
-                        project_id,
-                        response_content.content
-                    );
-                    log_api_error("create_project_role_template_binding:conflict", &err);
-                    Err(err)
                 }
                 status => {
                     let err = match serde_json::from_str::<serde_json::Value>(&response_content.content) {
@@ -524,132 +120,50 @@ pub async fn create_project_role_template_binding(
                     Err(err)
                 }
             }
-        }
-    }
-}
-
-
-/// Delete a project role template binding
-///
-/// # Arguments
-///
-/// * `configuration` - The configuration to use for the request
-/// * `project_id` - The project ID
-/// * `prtb_id` - The project role template binding ID
-/// # Returns
-///
-/// * `IoK8sApimachineryPkgApisMetaV1Status` - The status of the deletion
-/// # Errors
-///
-/// * `anyhow::Error` - The error that occurred while trying to delete the project role template binding
-///
-#[async_backtrace::framed]
-pub async fn delete_project_role_template_binding(
-    configuration: &Configuration,
-    project_id: &str,
-    prtb_id: &str,
-) -> Result<IoK8sApimachineryPkgApisMetaV1Status> {
-    info!("Deleting project role template binding with ID: {} in project: {}", prtb_id, project_id);
-
-    let result = delete_management_cattle_io_v3_namespaced_project_role_template_binding(
-        configuration,
-        prtb_id,
-        project_id,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-    )
-    .await
-    .context(format!(
-        "Failed to delete project role template binding with ID: {} in project: {}",
-        prtb_id, project_id
-    ));
-
-    match result {
+        },
         Err(e) => {
-            log_api_error("delete_project_role_template_binding", &e);
-            Err(anyhow::anyhow!(e))
-        }
-        Ok(response_content) => {
-            trace!(status = %response_content.status, "Received API response");
-
-            match response_content.status {
-                StatusCode::OK => {
-                    match serde_json::from_str::<IoK8sApimachineryPkgApisMetaV1Status>(&response_content.content) {
-                        Ok(data) => {
-                            info!("Successfully deleted project role template binding with ID: {}", prtb_id);
-                            Ok(data)
+            log_api_error("create_project_role_template_binding", &e);
+            match e {
+                Error::ResponseError(response_content) => {
+                    let msg = match response_content.status {
+                        StatusCode::NOT_FOUND => {
+                            format!("Cluster with ID: {} not found", project_id)
                         }
-                        Err(deserialize_err) => {
-                            let err = anyhow::anyhow!(
-                                "Failed to deserialize project role template binding deletion response: {}",
-                                deserialize_err
-                            );
-                            log_api_error("delete_project_role_template_binding:deserialize", &err);
-                            Err(err)
-                        }
-                    }
-                }
-                StatusCode::NOT_FOUND => {
-                    let err = anyhow::anyhow!(
-                        "Project role template binding with ID: {} not found for deletion. Response: {}",
-                        prtb_id,
-                        response_content.content
-                    );
-                    log_api_error("delete_project_role_template_binding:not_found", &err);
-                    Err(err)
-                }
-                StatusCode::UNAUTHORIZED => {
-                    let err = anyhow::anyhow!(
-                        "Unauthorized to delete project role template binding with ID: {}. Response: {}",
-                        prtb_id,
-                        response_content.content
-                    );
-                    log_api_error("delete_project_role_template_binding:unauthorized", &err);
-                    Err(err)
-                }
-                StatusCode::FORBIDDEN => {
-                    let err = anyhow::anyhow!(
-                        "Forbidden to delete project role template binding with ID: {}. Response: {}",
-                        prtb_id,
-                        response_content.content
-                    );
-                    log_api_error("delete_project_role_template_binding:forbidden", &err);
-                    Err(err)
-                }
-                StatusCode::CONFLICT => {
-                    let err = anyhow::anyhow!(
-                        "Conflict when deleting project role template binding with ID: {}. Response: {}",
-                        prtb_id,
-                        response_content.content
-                    );
-                    log_api_error("delete_project_role_template_binding:conflict", &err);
-                    Err(err)
-                }
-                status => {
-                    let err = match serde_json::from_str::<serde_json::Value>(&response_content.content) {
-                        Ok(error_obj) => {
-                            anyhow::anyhow!(
-                                "Unexpected status code {} when deleting project role template binding with ID: {}: {}", 
-                                status, 
-                                prtb_id,
-                                serde_json::to_string_pretty(&error_obj).unwrap_or_else(|_| response_content.content.clone())
+                        StatusCode::UNAUTHORIZED => {
+                            format!(
+                                "Unauthorized access while trying to create project role template binding with ID: {} in cluster: {}",
+                                prtb_id, project_id
                             )
                         }
-                        Err(_) => {
-                            anyhow::anyhow!(
-                                "Unexpected status code {} when deleting project role template binding with ID: {}: {}", 
-                                status, 
-                                prtb_id,
-                                response_content.content
+                        StatusCode::BAD_REQUEST => {
+                            format!(
+                                "Bad request when creating project role template binding with ID: {} in cluster: {}. Request body was: {}",
+                                prtb_id, project_id, response_content.content
                             )
+                        }
+                        StatusCode::FORBIDDEN => {
+                            format!(
+                                "Forbidden while trying to create project role template binding with ID: {} in cluster: {}",
+                                prtb_id, project_id
+                            )
+                        }
+                        StatusCode::CONFLICT => {
+                            format!(
+                                "Project role template binding with ID: {} in cluster {} already exists",
+                                prtb_id, project_id
+                            )
+                        }
+                        _ => {
+                            format!("Failed to create project role template binding with ID: {} in cluster {}. Response: {:#?}", prtb_id, project_id, response_content)
                         }
                     };
-                    log_api_error("delete_project_role_template_binding:unexpected_status", &err);
-                    Err(err)
+                    error!(msg);
+                    Err(anyhow::anyhow!(msg))
+                }
+                _ => {
+                    let msg = format!("Failed to create project role template binding with ID: {} in cluster: {}. Error: {:#?}", prtb_id, project_id, e);
+                    error!(msg);
+                    Err(anyhow::anyhow!(msg))
                 }
             }
         }
@@ -657,8 +171,7 @@ pub async fn delete_project_role_template_binding(
 }
 
 
-
-/// Get all project role template bindings for all projects
+/// Get all project role template bindings for all projects on an endpoint
 ///
 /// # Arguments
 ///
@@ -702,14 +215,11 @@ pub async fn get_all_project_role_template_bindings(
         None,
         None
     )
-    .await
-    .context("Failed to get all project role template bindings");
+    .await;
+
+    trace!(api_result = ?api_result, "Received API response");
 
     match api_result {
-        Err(e) => {
-            log_api_error("get_all_project_role_template_bindings", &e);
-            Err(anyhow::anyhow!(e))
-        }
         Ok(response_content) => {
             trace!(status = %response_content.status, "Received API response");
             
@@ -727,22 +237,6 @@ pub async fn get_all_project_role_template_bindings(
                         }
                     }
                 },
-                StatusCode::UNAUTHORIZED => {
-                    let err = anyhow::anyhow!(
-                        "Unauthorized to get all project role template bindings. Response: {}",
-                        response_content.content
-                    );
-                    log_api_error("get_all_project_role_template_bindings:unauthorized", &err);
-                    Err(err)
-                }
-                StatusCode::FORBIDDEN => {
-                    let err = anyhow::anyhow!(
-                        "Forbidden to get all project role template bindings. Response: {}",
-                        response_content.content
-                    );
-                    log_api_error("get_all_project_role_template_bindings:forbidden", &err);
-                    Err(err)
-                }
                 status => {
                     let err = match serde_json::from_str::<serde_json::Value>(&response_content.content) {
                         Ok(error_obj) => {
@@ -765,8 +259,544 @@ pub async fn get_all_project_role_template_bindings(
                 }
             }
         }
+        Err(e) => {
+            log_api_error("get_all_project_role_template_bindings", &e);
+            match e {
+                Error::ResponseError(response_content) => {
+                    let msg = match response_content.status {
+                        StatusCode::NOT_FOUND => format!("Project role template bindings not found. Response: {}", response_content.content),
+                        StatusCode::UNAUTHORIZED => format!("Unauthorized to get all project role template bindings. Response: {}", response_content.content),
+                        StatusCode::FORBIDDEN => format!("Forbidden to get all project role template bindings. Response: {}", response_content.content),
+                        _ => format!("Failed to get all project role template bindings. Response: {:#?}", response_content),
+                    };
+                    error!("{}", msg);
+                    Err(anyhow::anyhow!(msg))
+                },
+                _ => {
+                    let msg = format!("Failed to get all project role template bindings. Error was: {:#?}", e);
+                    error!("{}", msg);
+                    Err(anyhow::anyhow!(msg))
+                }
+            }
+        }
     }
 }
+
+
+    /// Get all project role template bindings from a cluster using the provided configuration
+    ///
+    /// # Arguments
+    ///
+    /// * `configuration` - The configuration to use for the request
+    /// * `cluster_id` - The ID of the cluster (namespace) to get the role template bindings for
+    /// * `field_selector` - If specified, selects only the specified fields of the bindings
+    /// * `label_selector` - If specified, selects only the bindings with the specified labels
+    /// * `limit` - If specified, limits the number of bindings returned
+    /// * `resource_version` - If specified, only returns bindings with a resource version greater than the specified version
+    /// * `resource_version_match` - If specified, only returns bindings with a resource version that matches the specified version
+    /// * `continue_` - If specified, continues the listing from the last binding returned in the previous response
+    ///
+    /// # Returns
+    ///
+    /// * `IoCattleManagementv3ProjectRoleTemplateBindingList` - The list of project role template bindings
+    ///
+    /// # Errors
+    ///
+    /// * `anyhow::Error` - The error that occurred while trying to get the role template bindings
+#[async_backtrace::framed]
+pub async fn get_project_role_template_bindings(
+    configuration: &Configuration,
+    cluster_id: &str,
+    field_selector: Option<&str>,
+    label_selector: Option<&str>,
+    limit: Option<i32>,
+    resource_version: Option<&str>,
+    resource_version_match: Option<&str>,
+    continue_: Option<&str>,
+) -> Result<IoCattleManagementv3ProjectRoleTemplateBindingList> {
+
+    let api_result = list_management_cattle_io_v3_namespaced_project_role_template_binding(
+        configuration,
+        cluster_id,
+        None,
+        None,
+        continue_,
+        field_selector,
+        label_selector,
+        limit,
+        resource_version,
+        resource_version_match,
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    trace!(api_result = ?api_result, "Received API response");
+
+    match api_result {
+        
+        Ok(response_content) => {
+            trace!(status = %response_content.status, "Received API response");
+            
+            match response_content.status {
+                StatusCode::OK => {
+                    match serde_json::from_str::<IoCattleManagementv3ProjectRoleTemplateBindingList>(&response_content.content) {
+                        Ok(data) => {
+                            info!("Successfully retrieved {} project role template bindings for cluster: {}", data.items.len(), cluster_id);
+                            Ok(data)
+                        },
+                        Err(deserialize_err) => {
+                            let msg = format!("Failed to deserialize project role template bindings for cluster: {}. Response: {:#?}. Error: {:#?}", cluster_id, response_content, deserialize_err);
+                            error!("{}", msg);
+                            Err(anyhow::anyhow!(msg))
+                        }
+                    }
+                },
+                status => {
+                    let err = match serde_json::from_str::<serde_json::Value>(&response_content.content) {
+                        Ok(error_obj) => {
+                            anyhow::anyhow!(
+                                "Unexpected status code {} when getting project role template bindings for cluster: {}: {}", 
+                                status, 
+                                cluster_id,
+                                serde_json::to_string_pretty(&error_obj).unwrap_or_else(|_| response_content.content.clone())
+                            )
+                        }
+                        Err(_) => {
+                            anyhow::anyhow!(
+                                "Unexpected status code {} when getting project role template bindings for cluster: {}: {}", 
+                                status, 
+                                cluster_id,
+                                response_content.content
+                            )
+                        }
+                    };
+                    log_api_error("get_project_role_template_bindings:unexpected_status", &err);
+                    Err(err)
+                }
+            }
+        }
+        Err(e) => {
+            log_api_error("get_project_role_template_bindings", &e);
+            match e {
+                Error::ResponseError(response_content) => {
+                    let msg = match response_content.status {
+                        StatusCode::NOT_FOUND => {
+                            format!("Project role template bindings not found for cluster: {}", cluster_id)
+                        }
+                        StatusCode::UNAUTHORIZED => {
+                            format!(
+                                "Unauthorized access while trying to get project role template bindings for cluster: {}",
+                                cluster_id
+                            )
+                        }
+                        StatusCode::BAD_REQUEST => {
+                            format!(
+                                "Bad request while trying to get project role template bindings for cluster: {}. Request body was: {}",
+                                cluster_id, response_content.content
+                            )
+                        }
+                        StatusCode::FORBIDDEN => {
+                            format!(
+                                "Forbidden access while trying to get project role template bindings for cluster: {}",
+                                cluster_id
+                            )
+                        }
+                        _ => {
+                            format!("Failed to get project role template bindings for cluster: {}. Response: {:#?}", cluster_id, response_content)
+                        }
+                    };
+                    error!("{}", msg);
+                    Err(anyhow::anyhow!(msg))
+                },            
+            _ => {
+                let msg = format!("Failed to get project role template bindings for cluster: {}. Error: {:#?}", cluster_id, e);
+                error!("{}", msg);
+                Err(anyhow::anyhow!(msg))
+            }
+        }
+    }
+}
+}
+
+
+/// Get all project role template bindings from a namespace using the provided configuration
+///
+/// # Arguments
+///
+/// * `configuration` - The configuration to use for the request
+/// * `project_id` - The ID of the project (namespace) to get the role template bindings for
+/// * `field_selector` - If specified, selects only the specified fields of the bindings
+/// * `label_selector` - If specified, selects only the bindings with the specified labels
+/// * `limit` - If specified, limits the number of bindings returned
+/// * `resource_version` - If specified, only returns bindings with a resource version greater than the specified version
+/// * `resource_version_match` - If specified, only returns bindings with a resource version that matches the specified version
+/// * `continue_` - If specified, continues the listing from the last binding returned in the previous response
+///
+/// # Returns
+///
+/// * `IoCattleManagementv3ProjectRoleTemplateBindingList` - The list of project role template bindings
+///
+/// # Errors
+///
+/// * `Error<ListManagementCattleIoV3NamespacedProjectRoleTemplateBindingError>` - The error that occurred while trying to get the bindings
+#[async_backtrace::framed]
+pub async fn get_namespaced_project_role_template_bindings(
+    configuration: &Configuration,
+    project_id: &str,
+    field_selector: Option<&str>,
+    label_selector: Option<&str>,
+    limit: Option<i32>,
+    resource_version: Option<&str>,
+    resource_version_match: Option<&str>,
+    continue_: Option<&str>,
+) -> Result< IoCattleManagementv3ProjectRoleTemplateBindingList>{
+    // debug!(
+    //     "Fetching project role template bindings for project_id: {}, with filters - field_selector: {:?}, label_selector: {:?}, limit: {:?}, resource_version: {:?}, resource_version_match: {:?}, continue: {:?}",
+    //     project_id, field_selector, label_selector, limit, resource_version, resource_version_match, continue_
+    // );
+
+    let api_result = list_management_cattle_io_v3_namespaced_project_role_template_binding(
+        configuration,
+        project_id,
+        None,
+        None,
+        continue_,
+        field_selector,
+        label_selector,
+        limit,
+        resource_version,
+        resource_version_match,
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    trace!(api_result = ?api_result, "Received API response");
+
+    match api_result {
+        Ok(response_content) => {
+
+            match response_content.status {
+                StatusCode::OK => match serde_json::from_str(&response_content.content) {
+                    Ok(data) => {
+                        debug!("Successfully deserialized response content");
+                        Ok(data)
+                    }
+                    Err(deserialize_err) => {
+                        let msg = format!("Failed to deserialize project role template bindings: {}", deserialize_err);
+                        error!(msg);
+                        Err(anyhow::anyhow!(msg))
+                    }
+                },
+                
+                status => {
+                let err =match serde_json::from_str::<serde_json::Value>(&response_content.content) {
+                    Ok(error_obj) => {
+                        anyhow::anyhow!(
+                            "Unexpected status code {} when getting project role template bindings: {}", 
+                            status, serde_json::to_string_pretty(&error_obj).unwrap_or_else(|_| response_content.content.clone()))
+                    }
+                    Err(deserialize_err) => {
+                        anyhow::anyhow!("Failed to deserialize error object: {}", deserialize_err)
+                    }
+                };
+                log_api_error("get_namespaced_project_role_template_bindings:unexpected_status", &err);
+                Err(err)
+                }
+            }
+        }
+        Err(e) => {
+            log_api_error("get_namespaced_project_role_template_bindings", &e);
+            match e {
+                Error::ResponseError(response_content) => {
+                let msg = match response_content.status {
+                    StatusCode::NOT_FOUND => 
+                        format!("Project with ID: {} not found", project_id)
+                    ,
+                    StatusCode::FORBIDDEN => 
+                        format!("Forbidden access while trying to get project role template bindings for project: {}", project_id)
+                    ,
+                    _ => 
+                        format!("Failed to get project role template bindings for project: {}. Response: {:#?}", project_id, response_content),
+                    
+                    };
+                    error!("{}", msg);
+                    Err(anyhow::anyhow!(msg))
+                },            
+                _ => {
+                    let msg = format!("Failed to get project role template bindings for project: {}. Error: {:#?}", project_id, e);
+                    error!("{}", msg);
+                    Err(anyhow::anyhow!(msg))
+                }
+
+            }
+        }
+    }
+}
+
+/// Update a project role template binding
+///
+/// # Arguments
+///
+/// * `configuration` - The configuration to use for the request
+/// * `cluster_id` - The cluster ID
+/// * `prtb_id` - The project role template binding ID
+/// * `patch_value` - The JSON patch to apply
+/// # Returns
+///
+/// * `IoCattleManagementv3ProjectRoleTemplateBinding` - The updated project role template binding
+/// # Errors
+///
+/// * `anyhow::Error` - The error that occurred while trying to update the project role template binding
+///
+#[async_backtrace::framed]
+pub async fn update_project_role_template_binding(
+    configuration: &Configuration,
+    cluster_id: &str,
+    prtb_id: &str,
+    patch_value: Value,
+) -> Result<IoCattleManagementv3ProjectRoleTemplateBinding> {
+    // info!("Patching project role template binding with ID: {} in cluster: {}", prtb_id, cluster_id);
+
+    let patch_array = match patch_value {
+        Value::Array(arr) => arr,
+        Value::Null => {
+            error!("Expected patch to serialize to a JSON array, but got null");
+            return Err(anyhow::anyhow!(
+                "Expected patch to serialize to a JSON array, but got null"
+            ));
+        }
+        _ => {
+            error!(
+                "Expected patch to serialize to a JSON array, but got: {:?}",
+                patch_value
+            );
+            return Err(anyhow::anyhow!(
+                "Expected patch to serialize to a JSON array"
+            ));
+        }
+    };
+
+    let k8s_patch = IoK8sApimachineryPkgApisMetaV1Patch::Array(patch_array);
+
+    let api_result = patch_management_cattle_io_v3_namespaced_project_role_template_binding(
+        configuration,
+        cluster_id,
+        prtb_id,
+        Some(k8s_patch),
+        None,
+        None,
+        None,
+        None,
+        None
+    )
+    .await;
+
+    trace!(result = ?api_result, "Received API response");
+
+    match api_result {
+        
+        Ok(response_content) => {
+            trace!(status = %response_content.status, "Received API response");
+
+            match response_content.status {
+                StatusCode::OK => {
+                    match serde_json::from_str::<IoCattleManagementv3ProjectRoleTemplateBinding>(&response_content.content) {
+                        Ok(data) => {
+                            info!("Successfully updated project role template binding with ID: {}", prtb_id);
+                            Ok(data)
+                        }
+                        Err(deserialize_err) => {
+                            let err = anyhow::anyhow!(
+                                "Failed to deserialize project role template binding update response: {}",
+                                deserialize_err
+                            );
+                            log_api_error("update_project_role_template_binding:deserialize", &err);
+                            Err(err)
+                        }
+                    }
+                }
+                status => {
+                    let err = match serde_json::from_str::<serde_json::Value>(&response_content.content) {
+                        Ok(error_obj) => {
+                            anyhow::anyhow!(
+                                "Unexpected status code {} when updating project role template binding with ID: {}: {}", 
+                                status, 
+                                prtb_id,
+                                serde_json::to_string_pretty(&error_obj).unwrap_or_else(|_| response_content.content.clone())
+                            )
+                        }
+                        Err(_) => {
+                            anyhow::anyhow!(
+                                "Unexpected status code {} when updating project role template binding with ID: {}: {}", 
+                                status, 
+                                prtb_id,
+                                response_content.content
+                            )
+                        }
+                    };
+                    log_api_error("update_project_role_template_binding:unexpected_status", &err);
+                    Err(err)
+                }
+            }
+        }
+        Err(e) => {
+            log_api_error("update_project_role_template_binding", &e);
+            match e {
+                Error::ResponseError(response_error) => {
+                    let msg = match response_error.status {
+                        StatusCode::NOT_FOUND => {
+                            format!(
+                                "Project role template binding with ID: {} in cluster: {} not found",
+                                prtb_id, cluster_id
+                            )
+                        }
+                        StatusCode::UNAUTHORIZED => {
+                            format!(
+                                "Unauthorized access while trying to update project role template binding with ID: {} in cluster: {}",
+                                prtb_id, cluster_id
+                            )
+                        }
+                        StatusCode::BAD_REQUEST => {
+                            format!(
+                                "Bad request when updating project role template binding with ID: {} in cluster: {}. Request body was: {}",
+                                prtb_id, cluster_id, response_error.content
+                            )
+                        }
+                        _ => {
+                            format!(
+                                "Failed to update project role template binding with ID: {} in cluster: {}. Response: {:#?}",
+                                prtb_id, cluster_id, response_error
+                            )
+                        }
+                        
+                    };
+                    error!(msg);
+                    Err(anyhow::anyhow!(msg))
+                }
+            _ => {
+                let msg = format!("Failed to update project role template binding with ID: {} in cluster: {}. Error: {:#?}", prtb_id, cluster_id, e);
+                error!(msg);
+                Err(anyhow::anyhow!(msg))
+            }
+        }
+        }
+    }
+}
+
+
+
+/// Delete a project role template binding
+///
+/// # Arguments
+///
+/// * `configuration` - The configuration to use for the request
+/// * `project_id` - The project ID
+/// * `prtb_id` - The project role template binding ID
+/// # Returns
+///
+/// * `IoK8sApimachineryPkgApisMetaV1Status` - The status of the deletion
+/// # Errors
+///
+/// * `anyhow::Error` - The error that occurred while trying to delete the project role template binding
+///
+#[async_backtrace::framed]
+pub async fn delete_project_role_template_binding(
+    configuration: &Configuration,
+    project_id: &str,
+    prtb_id: &str,
+) -> Result<IoK8sApimachineryPkgApisMetaV1Status> {
+    // info!("Deleting project role template binding with ID: {} in project: {}", prtb_id, project_id);
+
+    let api_result = delete_management_cattle_io_v3_namespaced_project_role_template_binding(
+        configuration,
+        prtb_id,
+        project_id,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    trace!(api_result = ?api_result, "Received API response");
+
+    match api_result {
+        
+        Ok(response_content) => {
+            // trace!(status = %response_content.status, "Received API response");
+
+            match response_content.status {
+                StatusCode::OK => {
+                    match serde_json::from_str::<IoK8sApimachineryPkgApisMetaV1Status>(&response_content.content) {
+                        Ok(data) => {
+                            info!("Successfully deleted project role template binding with ID: {}", prtb_id);
+                            Ok(data)
+                        }
+                        Err(deserialize_err) => {
+                            let err = anyhow::anyhow!(
+                                "Failed to deserialize project role template binding deletion response: {}",
+                                deserialize_err
+                            );
+                            log_api_error("delete_project_role_template_binding:deserialize", &err);
+                            Err(err)
+                        }
+                    }
+                }
+                status => {
+                    let err = match serde_json::from_str::<serde_json::Value>(&response_content.content) {
+                        Ok(error_obj) => {
+                            anyhow::anyhow!(
+                                "Unexpected status code {} when deleting project role template binding with ID: {}: {}", 
+                                status, 
+                                prtb_id,
+                                serde_json::to_string_pretty(&error_obj).unwrap_or_else(|_| response_content.content.clone())
+                            )
+                        }
+                        Err(_) => {
+                            anyhow::anyhow!(
+                                "Unexpected status code {} when deleting project role template binding with ID: {}: {}", 
+                                status, 
+                                prtb_id,
+                                response_content.content
+                            )
+                        }
+                    };
+                    log_api_error("delete_project_role_template_binding:unexpected_status", &err);
+                    Err(err)
+                }
+            }
+        }
+        Err(e) => {
+            log_api_error("delete_project_role_template_binding", &e);
+            match e {
+                Error::ResponseError(response_error) => {
+                    let msg = match response_error.status {
+                        StatusCode::NOT_FOUND => format!( "Project role template binding with ID: {} in project: {} not found", prtb_id, project_id ),
+                        StatusCode::UNAUTHORIZED => format!( "Unauthorized access while trying to delete project role template binding with ID: {} in project: {}", prtb_id, project_id ) ,
+                        StatusCode::BAD_REQUEST => format!( "Bad request when deleting project role template binding with ID: {} in project: {}. Request body was: {}", prtb_id, project_id, response_error.content ),
+                        _ => format!( "Failed to delete project role template binding with ID: {} in project: {}. Response: {:#?}", prtb_id, project_id, response_error )
+                        
+                    };
+                    error!(msg);
+                    Err(anyhow::anyhow!(msg))
+                }
+                _ => {
+                    let msg = format!("Failed to delete project role template binding with ID: {} in project: {}. Error: {:#?}", prtb_id, project_id, e);
+                    error!(msg);
+                    Err(anyhow::anyhow!(msg))
+                }
+            }
+        }
+    }
+}
+
+
 
 
 

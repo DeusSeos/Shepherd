@@ -19,6 +19,12 @@ pub enum AppError {
     Other(String),
 }
 
+impl AppError {
+    pub fn configuration_error(msg: impl Into<String>) -> Self {
+        AppError::Other(format!("Configuration error: {}", msg.into()))
+    }
+}
+
 
 
 

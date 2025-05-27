@@ -245,7 +245,7 @@ async fn delete_object(
                         cluster_id,
                         e
                     );
-                    Err(anyhow::Error::new(e))
+                    Err(e)
                 }
                 Ok(delete_result) => match delete_result {
                     Ok(project) => {

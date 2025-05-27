@@ -1,10 +1,13 @@
 #![allow(unused_variables)]
 // #![allow(unused_imports)]
 
-use std::path::PathBuf;
+use anyhow::{Result, Context};
 
 use rancher_cac::api::client::ShepherdClient;
 use rancher_cac::api::config;
+
+use rancher_cac::error::{AppError, handle_result_collection};
+
 use rancher_cac::utils::file::{
     get_minimal_object_from_contents, write_back_objects,
 };
@@ -12,11 +15,15 @@ use rancher_cac::utils::git::{
     commit_changes, get_deleted_files_and_contents, get_modified_files,
     get_new_uncommited_files, init_git_repo_with_main_branch,
 };
-use rancher_cac::models::MinimalObject;
+use rancher_cac::models::{MinimalObject, ObjectType};
+
 use rancher_cac::modify::{compare_and_update_configurations, create_objects, delete_objects};
+
 use rancher_cac::{
-    download_current_configuration, models::CreatedObject, models::ObjectType,
+    download_current_configuration, 
 };
+
+
 
 use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
@@ -39,9 +46,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_tracing();
 
     // get home path and concatenate with .config/shepherd/config.toml
-    let home_path = std::env::var("HOME").unwrap();
+    let home_path = std::env::var("HOME")
+        .map_err(|_| AppError::Other("HOME environment variable not set".to_string()))?;
     let app_config_path = home_path + "/.config/shepherd/config.toml";
-    let app_config = config::ShepherdConfig::from_file(&app_config_path).unwrap();
+
+    let app_config = config::ShepherdConfig::from_file(&app_config_path)
+        .context(format!("Failed to load config file: {}", app_config_path))?;
 
     debug!("App config: {:#?}", app_config);
 
@@ -62,6 +72,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if download {
         // Download the current configuration from the Rancher API
         download_current_configuration(&client.config, &config_folder_path, &file_format).await?;
+
+
         // TODO: generate a short hand version of the updates made to the configuration
 
         // Initialize a git repository in the path or if error, commit a change with current datetime
@@ -104,15 +116,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let update_objects = compare_and_update_configurations(client_config.clone(), &config_folder_path, &cluster_id, &file_format).await;
         let created_objects = create_objects(client_config.clone(), new_files, file_format).await;
 
-        // Separate errors and successes from object creation results
-        let mut errors = Vec::new();
-        let mut successes: Vec<(PathBuf, CreatedObject)> = Vec::new();
-        for result in created_objects {
-            match result {
-                Ok((file_path, created_object)) => successes.push((file_path, created_object)),
-                Err(err) => errors.push(err),
-            }
-        }
+        // // Separate errors and successes from object creation results
+        // let mut errors = Vec::new();
+        // let mut successes: Vec<(PathBuf, CreatedObject)> = Vec::new();
+        // for result in created_objects {
+        //     match result {
+        //         Ok((file_path, created_object)) => successes.push((file_path, created_object)),
+        //         Err(err) => errors.push(err),
+        //     }
+        // }
+
+        let (successes, mut errors) = handle_result_collection(created_objects);
 
         // Write back the successfully created objects
         write_back_objects(successes, file_format).await?;
@@ -130,12 +144,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let deleted_objects = delete_objects(client_config.clone(), objects_to_delete).await;
 
 
-        for result in deleted_objects {
-            match result {
-                Ok(_) => (),
-                Err(err) => errors.push(err),
-            }
-        }
+        // for result in deleted_objects {
+        //     match result {
+        //         Ok(_) => (),
+        //         Err(err) => errors.push(err),
+        //     }
+        // }
+
+        let (_, delete_errors) = handle_result_collection(deleted_objects);
+
+        errors.extend(delete_errors);
 
         // Report errors, if any
         if !errors.is_empty() {
@@ -144,6 +162,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+
+    info!("Done");
 
     Ok(())
 }

@@ -217,7 +217,7 @@ impl ObjectType {
         }
     }
     
-    pub fn from_path(path: &Path) -> Option<Self> {
+    pub fn from_path(_path: &Path) -> Option<Self> {
         // Logic to determine object type from path
         todo!("Implement logic to determine object type from path")
     }

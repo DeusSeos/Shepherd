@@ -15,10 +15,11 @@ pub mod resources {
 
 pub mod api {
     pub mod config;
-    pub mod errors;
     pub mod client_info;
     pub mod client;
 }
+
+pub mod error;
 
 
 pub mod models;
