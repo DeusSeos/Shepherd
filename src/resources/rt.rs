@@ -1,4 +1,4 @@
-use crate::utils::logging::log_api_error;
+use crate::{models::{CreatedObject, ObjectType}, traits::RancherResource, utils::logging::log_api_error};
 use anyhow::Result;
 
 use std::collections::HashMap;
@@ -36,6 +36,70 @@ pub const RT_EXCLUDE_PATHS: &[&str] = &[
     "metadata.selfLink",
     "metadata.uid",
 ];
+
+
+impl RancherResource for RoleTemplate {
+    type ApiType = IoCattleManagementv3RoleTemplate;
+
+    async fn list(config: &Configuration, _: Option<&str>) -> Result<Vec<Self::ApiType>> {
+
+        let bindings_list = get_role_templates(config, None, None, None, None, None, None).await?;
+        Ok(bindings_list.items)
+    }
+
+    async fn get(config: &Configuration, name: &str, _: &str) -> Result<Self> {
+        let result = find_role_template(config, name, None).await;
+
+        let rt = Self::handle_api_error(result, &format!("get role template {}", name))?;
+        Self::try_from_api(rt)
+    }
+
+    async fn create(&self, config: &Configuration) -> Result<CreatedObject> {
+        let rt_api = self.clone().try_into_api()?;
+
+        let result = create_role_template(config, rt_api).await?;
+        Ok(CreatedObject::RoleTemplate(result))
+        
+    }
+
+    async fn update(&self, config: &Configuration, patch: Value) -> Result<CreatedObject> {
+        let result = update_role_template(config, &self.id, patch).await?;
+        Ok(CreatedObject::RoleTemplate(result))
+    }
+
+    async fn delete(config: &Configuration, name: &str, _: &str) -> Result<CreatedObject> {
+        let result = delete_role_template(config, name).await?;
+        Ok(CreatedObject::Status(result))
+    }
+    
+    fn resource_type() -> crate::models::ObjectType {
+        ObjectType::RoleTemplate
+    }
+    
+    fn exclude_paths() -> &'static [&'static str] {
+        RT_EXCLUDE_PATHS
+    }
+    
+    fn try_from_api(value: Self::ApiType) -> Result<Self> {
+        RoleTemplate::try_from(value)
+    }
+    
+    fn try_into_api(self) -> Result<Self::ApiType> {
+        Ok(IoCattleManagementv3RoleTemplate::try_from(self)?)
+    }
+    
+    fn id(&self) -> Option<String> {
+        Some(self.id.clone())
+    }
+    
+    fn namespace(&self) -> Option<String> {
+        None
+    }
+    
+    fn resource_version(&self) -> Option<String> {
+        self.resource_version.clone()
+    }
+}
 
 
 /// Create a role template
@@ -304,7 +368,7 @@ pub async fn get_role_templates(
                 StatusCode::OK => {
                     match serde_json::from_str::<IoCattleManagementv3RoleTemplateList>(&response_content.content) {
                         Ok(data) => {
-                            debug!("Successfully retrieved {} role templates", data.items.len());
+                            info!("Successfully retrieved {} role templates", data.items.len());
                             Ok(data)
                         },
                         Err(deserialize_err) => {
@@ -780,23 +844,6 @@ impl PartialEq<RoleTemplate> for IoCattleManagementv3RoleTemplate {
 
 impl PartialEq<IoCattleManagementv3RoleTemplate> for RoleTemplate {
     fn eq(&self, other: &IoCattleManagementv3RoleTemplate) -> bool {
-        // let lhs = Some(self.id.clone());
-        // let rhs = other.metadata.as_ref().and_then(|m| m.name.clone());
-
-        // self.administrative == other.administrative
-        //     && self.builtin == other.builtin
-        //     && self.cluster_creator_default == other.cluster_creator_default
-        //     && self.context == other.context
-        //     && self.description == other.description
-        //     && self.display_name == other.display_name
-        //     && self.external == other.external
-        //     && self.hidden == other.hidden
-        //     && self.locked == other.locked
-        //     && lhs == rhs
-        //     && self.project_creator_default == other.project_creator_default
-        //     && self.role_template_names == other.role_template_names
-        //     && self.rules == other.rules
-
 
         other == self
     }

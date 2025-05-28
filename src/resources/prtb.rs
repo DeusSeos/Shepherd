@@ -1,7 +1,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{utils::logging::log_api_error, models::ResourceVersionMatch};
+use crate::{models::{CreatedObject, ObjectType, ResourceVersionMatch}, traits::RancherResource, utils::logging::log_api_error};
 use anyhow::Result;
 
 use reqwest::StatusCode;
@@ -37,6 +37,77 @@ pub const PRTB_EXCLUDE_PATHS: &[&str] = &[
     "metadata.selfLink",
     "metadata.uid",
 ];
+
+
+impl RancherResource for ProjectRoleTemplateBinding {
+    type ApiType = IoCattleManagementv3ProjectRoleTemplateBinding;
+
+    async fn list(config: &Configuration, namespace: Option<&str>) -> Result<Vec<Self::ApiType>> {
+        let ns = namespace.ok_or_else(|| anyhow::anyhow!("Namespace is required for listing project role template bindings"))?;
+        let bindings_list = get_namespaced_project_role_template_bindings(config, ns, None, None, None, None, None, None).await?;
+        Ok(bindings_list.items)
+    }
+
+    async fn get(config: &Configuration, name: &str, namespace: &str) -> Result<Self> {
+        // For ProjectRoleTemplateBinding, we need to list and find the specific one
+        // as there's no direct get method in the API
+        let bindings = Self::list(config, Some(namespace)).await?;
+        let binding = bindings.iter()
+            .find(|p| p.metadata.as_ref().and_then(|m| m.name.as_ref()) == Some(&name.to_string()))
+            .ok_or_else(|| anyhow::anyhow!("Project role template binding not found: {}", name))?;
+            
+        ProjectRoleTemplateBinding::try_from(binding.clone())
+    }
+
+    async fn create(&self, config: &Configuration) -> Result<CreatedObject> {
+        let prtb_api = self.clone().try_into_api()?;
+
+        let ns = self.namespace().ok_or_else(|| anyhow::anyhow!("Namespace is required for creating project role template bindings"))?;
+
+        let result = create_project_role_template_binding(config, &ns, prtb_api).await?;
+        Ok(CreatedObject::ProjectRoleTemplateBinding(result))
+        
+    }
+
+    async fn update(&self, config: &Configuration, patch: Value) -> Result<CreatedObject> {
+        let result = update_project_role_template_binding(config, &self.namespace, &self.id, patch).await?;
+        Ok(CreatedObject::ProjectRoleTemplateBinding(result))
+    }
+
+    async fn delete(config: &Configuration, name: &str, namespace: &str) -> Result<CreatedObject> {
+        let result = delete_project_role_template_binding(config, namespace, name).await?;
+        Ok(CreatedObject::Status(result))
+    }
+    
+    fn resource_type() -> crate::models::ObjectType {
+        ObjectType::ProjectRoleTemplateBinding
+    }
+    
+    fn exclude_paths() -> &'static [&'static str] {
+        PRTB_EXCLUDE_PATHS
+    }
+    
+    fn try_from_api(value: Self::ApiType) -> Result<Self> {
+        ProjectRoleTemplateBinding::try_from(value)
+    }
+    
+    fn try_into_api(self) -> Result<Self::ApiType> {
+        Ok(IoCattleManagementv3ProjectRoleTemplateBinding::try_from(self)?)
+    }
+    
+    fn id(&self) -> Option<String> {
+        Some(self.id.clone())
+    }
+    
+    fn namespace(&self) -> Option<String> {
+        Some(self.namespace.clone())
+    }
+    
+    fn resource_version(&self) -> Option<String> {
+        self.resource_version.clone()
+    }
+}
+
 
 
 /// Create a project role template binding
@@ -124,33 +195,11 @@ pub async fn create_project_role_template_binding(
             match e {
                 Error::ResponseError(response_content) => {
                     let msg = match response_content.status {
-                        StatusCode::NOT_FOUND => {
-                            format!("Cluster with ID: {} not found", project_id)
-                        }
-                        StatusCode::UNAUTHORIZED => {
-                            format!(
-                                "Unauthorized access while trying to create project role template binding with ID: {} in cluster: {}",
-                                prtb_id, project_id
-                            )
-                        }
-                        StatusCode::BAD_REQUEST => {
-                            format!(
-                                "Bad request when creating project role template binding with ID: {} in cluster: {}. Request body was: {}",
-                                prtb_id, project_id, response_content.content
-                            )
-                        }
-                        StatusCode::FORBIDDEN => {
-                            format!(
-                                "Forbidden while trying to create project role template binding with ID: {} in cluster: {}",
-                                prtb_id, project_id
-                            )
-                        }
-                        StatusCode::CONFLICT => {
-                            format!(
-                                "Project role template binding with ID: {} in cluster {} already exists",
-                                prtb_id, project_id
-                            )
-                        }
+                        StatusCode::NOT_FOUND => format!("Cluster with ID: {} not found", project_id) ,
+                        StatusCode::UNAUTHORIZED => format!( "Unauthorized access while trying to create project role template binding with ID: {} in cluster: {}", prtb_id, project_id ) ,
+                        StatusCode::BAD_REQUEST => format!( "Bad request when creating project role template binding with ID: {} in cluster: {}. Request body was: {}", prtb_id, project_id, response_content.content ) ,
+                        StatusCode::FORBIDDEN => format!( "Forbidden while trying to create project role template binding with ID: {} in cluster: {}", prtb_id, project_id ) ,
+                        StatusCode::CONFLICT => format!( "Project role template binding with ID: {} in cluster {} already exists", prtb_id, project_id ) ,
                         _ => {
                             format!("Failed to create project role template binding with ID: {} in cluster {}. Response: {:#?}", prtb_id, project_id, response_content)
                         }
@@ -510,7 +559,7 @@ pub async fn get_namespaced_project_role_template_bindings(
 /// # Arguments
 ///
 /// * `configuration` - The configuration to use for the request
-/// * `cluster_id` - The cluster ID
+/// * `project_id` - The project ID
 /// * `prtb_id` - The project role template binding ID
 /// * `patch_value` - The JSON patch to apply
 /// # Returns
@@ -523,7 +572,7 @@ pub async fn get_namespaced_project_role_template_bindings(
 #[async_backtrace::framed]
 pub async fn update_project_role_template_binding(
     configuration: &Configuration,
-    cluster_id: &str,
+    project_id: &str,
     prtb_id: &str,
     patch_value: Value,
 ) -> Result<IoCattleManagementv3ProjectRoleTemplateBinding> {
@@ -552,7 +601,7 @@ pub async fn update_project_role_template_binding(
 
     let api_result = patch_management_cattle_io_v3_namespaced_project_role_template_binding(
         configuration,
-        cluster_id,
+        project_id,
         prtb_id,
         Some(k8s_patch),
         None,
@@ -616,26 +665,26 @@ pub async fn update_project_role_template_binding(
                     let msg = match response_error.status {
                         StatusCode::NOT_FOUND => {
                             format!(
-                                "Project role template binding with ID: {} in cluster: {} not found",
-                                prtb_id, cluster_id
+                                "Project role template binding with ID: {} in project: {} not found",
+                                prtb_id, project_id
                             )
                         }
                         StatusCode::UNAUTHORIZED => {
                             format!(
-                                "Unauthorized access while trying to update project role template binding with ID: {} in cluster: {}",
-                                prtb_id, cluster_id
+                                "Unauthorized access while trying to update project role template binding with ID: {} in project: {}",
+                                prtb_id, project_id
                             )
                         }
                         StatusCode::BAD_REQUEST => {
                             format!(
-                                "Bad request when updating project role template binding with ID: {} in cluster: {}. Request body was: {}",
-                                prtb_id, cluster_id, response_error.content
+                                "Bad request when updating project role template binding with ID: {} in project: {}. Request body was: {}",
+                                prtb_id, project_id, response_error.content
                             )
                         }
                         _ => {
                             format!(
-                                "Failed to update project role template binding with ID: {} in cluster: {}. Response: {:#?}",
-                                prtb_id, cluster_id, response_error
+                                "Failed to update project role template binding with ID: {} in project: {}. Response: {:#?}",
+                                prtb_id, project_id, response_error
                             )
                         }
                         
@@ -644,7 +693,7 @@ pub async fn update_project_role_template_binding(
                     Err(anyhow::anyhow!(msg))
                 }
             _ => {
-                let msg = format!("Failed to update project role template binding with ID: {} in cluster: {}. Error: {:#?}", prtb_id, cluster_id, e);
+                let msg = format!("Failed to update project role template binding with ID: {} in project: {}. Error: {:#?}", prtb_id, project_id, e);
                 error!(msg);
                 Err(anyhow::anyhow!(msg))
             }
@@ -937,18 +986,6 @@ impl PartialEq<ProjectRoleTemplateBinding> for IoCattleManagementv3ProjectRoleTe
 
 impl PartialEq<IoCattleManagementv3ProjectRoleTemplateBinding> for ProjectRoleTemplateBinding {
     fn eq(&self, other: &IoCattleManagementv3ProjectRoleTemplateBinding) -> bool {
-        // let lhs = Some(self.id.clone());
-        // let rhs = other.metadata.as_ref().and_then(|m| m.name.clone());
-
-        // lhs == rhs
-        //     && self.group_name == other.group_name
-        //     && self.group_principal_name == other.group_principal_name
-        //     && self.project_name == other.project_name
-        //     && self.role_template_name == other.role_template_name
-        //     && self.service_account == other.service_account
-        //     && self.user_name == other.user_name
-        //     && self.user_principal_name == other.user_principal_name
-
         other == self
     }
 }

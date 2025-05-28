@@ -4,7 +4,7 @@ use json_patch::diff;
 use rancher_client::models::{IoCattleManagementv3Project, IoCattleManagementv3ProjectRoleTemplateBinding, IoCattleManagementv3RoleTemplate};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::{clean_up_value, api::config::RancherClusterConfig, resources::project::PROJECT_EXCLUDE_PATHS, resources::prtb::PRTB_EXCLUDE_PATHS, resources::rt::RT_EXCLUDE_PATHS, models::ObjectType};
 
@@ -38,7 +38,7 @@ pub fn compute_cluster_diff(
             let mut drtv = serde_json::to_value(desired_rt).unwrap();
             clean_up_value(&mut crtv, RT_EXCLUDE_PATHS);
             clean_up_value(&mut drtv, RT_EXCLUDE_PATHS);
-            let patch = create_json_patch::<IoCattleManagementv3RoleTemplate>(&crtv, &drtv);
+            let patch = calculate_json_patch::<IoCattleManagementv3RoleTemplate>(&crtv, &drtv);
             let rt_id = crt.metadata.as_ref().unwrap().name.clone().unwrap();
             if let Some(patch) = patch {
                 debug!("RoleTemplate `{}` diff computed and added to patches", rt_id);
@@ -54,7 +54,7 @@ pub fn compute_cluster_diff(
             let mut dpv = serde_json::to_value(d_project).unwrap();
             clean_up_value(&mut cpv, PROJECT_EXCLUDE_PATHS);
             clean_up_value(&mut dpv, PROJECT_EXCLUDE_PATHS);
-            let patch = create_json_patch::<IoCattleManagementv3Project>(&cpv, &dpv);
+            let patch = calculate_json_patch::<IoCattleManagementv3Project>(&cpv, &dpv);
             let cluster_id = c_project.metadata.as_ref().unwrap().namespace.clone().unwrap();
             if let Some(patch) = patch {
                 patches.insert((ObjectType::Project, c_project_id.to_string(), Some(cluster_id.clone())), patch);
@@ -67,7 +67,7 @@ pub fn compute_cluster_diff(
                     let mut dprtbv = serde_json::to_value(desired_prtb).unwrap();
                     clean_up_value(&mut cprtbv, PRTB_EXCLUDE_PATHS);
                     clean_up_value(&mut dprtbv, PRTB_EXCLUDE_PATHS);
-                    let patch = create_json_patch::<IoCattleManagementv3ProjectRoleTemplateBinding>(&cprtbv, &dprtbv);
+                    let patch = calculate_json_patch::<IoCattleManagementv3ProjectRoleTemplateBinding>(&cprtbv, &dprtbv);
                     let prtb_id = cprtb.metadata.as_ref().unwrap().name.clone().unwrap();
                     if let Some(patch) = patch {
                         debug!("ProjectRoleTemplateBinding `{}` diff computed and added to patches", prtb_id);
@@ -77,7 +77,7 @@ pub fn compute_cluster_diff(
             }
         }
     }
-    debug!("Total patches computed: {}", patches.len());
+    info!("Total patches computed: {}", patches.len());
     patches
 }
 
@@ -135,7 +135,7 @@ pub fn diff_boxed_hashmap_string_string(
 /// # Returns
 /// * A JSON value representing the patch.
 ///
-pub fn create_json_patch<T>(current_state: &Value, desired_state: &Value) -> Option<Value>
+pub fn calculate_json_patch<T>(current_state: &Value, desired_state: &Value) -> Option<Value>
 where
     T: Serialize + DeserializeOwned,
 {

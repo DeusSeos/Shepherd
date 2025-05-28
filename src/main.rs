@@ -155,12 +155,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         errors.extend(delete_errors);
 
-        // Report errors, if any
-        if !errors.is_empty() {
-            for err in errors {
-                error!("Error for object: {:#?}", err);
-            }
-        }
+        // // Report errors, if any
+        // if !errors.is_empty() {
+        //     for err in errors {
+        //         error!("Error for object: {:#?}", err);
+        //     }
+        // }
     }
 
     info!("Done");

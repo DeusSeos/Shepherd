@@ -65,18 +65,17 @@ impl FileFormat {
 /// * `Result<MinimalObject, ConversionError>` - The minimal object loaded from the file
 ///
 pub async fn get_minimal_object_from_path(object_type: ObjectType, path: &Path) -> Result<MinimalObject> {
-    let file_format = file_format_from_path(path);
     match object_type {
         ObjectType::Project => {
-            let object: Project = load_object(path, &file_format).await.unwrap();
+            let object: Project = load_object(path).await.unwrap();
             MinimalObject::try_from(object)
         },
         ObjectType::RoleTemplate => {
-            let object: RoleTemplate = load_object(path, &file_format).await.unwrap();
+            let object: RoleTemplate = load_object(path).await.unwrap();
             MinimalObject::try_from(object)
         },
         ObjectType::ProjectRoleTemplateBinding => {
-            let object: ProjectRoleTemplateBinding = load_object(path, &file_format).await.unwrap();
+            let object: ProjectRoleTemplateBinding = load_object(path).await.unwrap();
             MinimalObject::try_from(object)
         }
         ObjectType::Cluster => {

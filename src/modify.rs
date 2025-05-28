@@ -1,4 +1,5 @@
 use crate::api::config::RancherClusterConfig;
+use crate::traits::RancherResource;
 use crate::utils::diff::compute_cluster_diff;
 use crate::utils::file::FileFormat;
 use crate::models::{ConversionError, CreatedObject, MinimalObject};
@@ -75,7 +76,7 @@ pub async fn compare_and_update_configurations(
         &serde_json::to_value(&live_config).unwrap(),
         &serde_json::to_value(&stored_config).unwrap(),
     );
-    info!(
+    debug!(
         "Generated diffs for cluster `{}`: {:#?} ",
         cluster_id, diffs
     );
@@ -201,137 +202,168 @@ pub async fn delete_objects(
     results
 }
 
+// /// Deletes an object from the cluster
+// /// # Arguments
+// /// * `configuration` - The configuration object
+// /// * `object_type` - The type of object to delete
+// /// * `minimal_object` - The minimal object
+// /// # Returns
+// /// * `Result<CreatedObject, anyhow::Error>`
+// ///
+// async fn delete_object(
+//     configuration: &Arc<Configuration>,
+//     object_type: &ObjectType,
+//     minimal_object: &MinimalObject,
+// ) -> anyhow::Result<CreatedObject> {
+//     match object_type {
+//         ObjectType::Project => {
+//             let cluster_id = minimal_object
+//                 .namespace
+//                 .as_deref()
+//                 .unwrap_or("<no-namespace>");
+//             if minimal_object.object_id.is_none() {
+//                 anyhow::bail!(ConversionError::InvalidValue {
+//                     field: "object_id".into(),
+//                     reason: "object_id is required".into(),
+//                 });
+//             }
+//             info!(
+//                 "Deleting project `{}` from cluster `{}`",
+//                 minimal_object.object_id.as_ref().unwrap(),
+//                 cluster_id
+//             );
+//             let object = delete_project(
+//                 configuration,
+//                 cluster_id,
+//                 minimal_object.object_id.as_ref().unwrap().as_ref(),
+//             )
+//             .await;
+//             match object {
+//                 Err(e) => {
+//                     error!(
+//                         "Failed to delete project `{}` from cluster `{}`: {}",
+//                         minimal_object.object_id.as_ref().unwrap(),
+//                         cluster_id,
+//                         e
+//                     );
+//                     Err(e)
+//                 }
+//                 Ok(delete_result) => match delete_result {
+//                     Ok(project) => {
+//                         info!(
+//                             "Successfully deleted project: {}",
+//                             project
+//                                 .metadata
+//                                 .as_ref()
+//                                 .and_then(|m| m.name.as_ref())
+//                                 .unwrap_or(&"unknown".to_string())
+//                         );
+//                         Ok(CreatedObject::Project(project))
+//                     }
+//                     Err(status) => {
+//                         if status.code.unwrap_or(200) == 404 {
+//                             warn!(
+//                                 "Project {} not found or already deleted",
+//                                 minimal_object.object_id.as_ref().unwrap()
+//                             );
+//                         } else {
+//                             info!("Deletion returned status: {:?}", status);
+//                         }
+//                         Ok(CreatedObject::Status(status))
+//                     }
+//                 },
+//             }
+//         }
+//         ObjectType::RoleTemplate => {
+//             if minimal_object.object_id.is_none() {
+//                 anyhow::bail!(ConversionError::InvalidValue {
+//                     field: "object_id".into(),
+//                     reason: "object_id is required".into(),
+//                 });
+//             }
+//             info!( "Deleting role-template `{}`", minimal_object.object_id.as_ref().unwrap() );
+//             let object = delete_role_template( configuration, minimal_object.object_id.as_ref().unwrap().as_ref()).await;
+//             match object {
+//                 Ok(object) => {
+//                     info!("Deleted role-template `{}`", minimal_object.object_id.as_ref().unwrap() );
+//                     Ok(CreatedObject::Status(object))
+//                 }
+//                 Err(e) => {
+//                     error!("Failed to delete role-template `{}`: {}", minimal_object.object_id.as_ref().unwrap(), e);
+//                     Err(e)
+//                 }
+//             }
+//         }
+//         ObjectType::ProjectRoleTemplateBinding => {
+//             let cluster_id = minimal_object
+//                 .namespace
+//                 .as_deref()
+//                 .unwrap_or("<no-namespace>");
+//             info!(
+//                 "Deleting prtb `{}` from cluster `{}`",
+//                 minimal_object.object_id.as_ref().unwrap(),
+//                 cluster_id
+//             );
+//             let object = delete_project_role_template_binding(
+//                 configuration,
+//                 cluster_id,
+//                 minimal_object.object_id.as_ref().unwrap().as_ref(),
+//             )
+//             .await;
+//             match object {
+//                 Ok(object) => {
+//                     info!(
+//                         "Deleted prtb `{}` from cluster `{}`",
+//                         minimal_object.object_id.as_ref().unwrap(),
+//                         cluster_id
+//                     );
+//                     Ok(CreatedObject::Status(object))
+//                 }
+//                 Err(e) => {
+//                     error!(
+//                         "Failed to delete prtb `{}` from cluster `{}`: {}",
+//                         minimal_object.object_id.as_ref().unwrap(),
+//                         cluster_id,
+//                         e
+//                     );
+//                     Err(e)
+//                 }
+//             }
+//         }
+//         _ => panic!("Unsupported object type: {:?}", object_type),
+//     }
+// }
+
+
 /// Deletes an object from the cluster
-/// # Arguments
-/// * `configuration` - The configuration object
-/// * `object_type` - The type of object to delete
-/// * `minimal_object` - The minimal object
-/// # Returns
-/// * `Result<CreatedObject, anyhow::Error>`
-///
 async fn delete_object(
     configuration: &Arc<Configuration>,
     object_type: &ObjectType,
     minimal_object: &MinimalObject,
-) -> anyhow::Result<CreatedObject> {
+) -> Result<CreatedObject> {
+    let name = minimal_object.object_id.as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Object ID is required for deletion"))?;
+    
+    let namespace = minimal_object.namespace.as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Namespace is required for deletion"))?;
+    
     match object_type {
         ObjectType::Project => {
-            let cluster_id = minimal_object
-                .namespace
-                .as_deref()
-                .unwrap_or("<no-namespace>");
-            if minimal_object.object_id.is_none() {
-                anyhow::bail!(ConversionError::InvalidValue {
-                    field: "object_id".into(),
-                    reason: "object_id is required".into(),
-                });
-            }
-            info!(
-                "Deleting project `{}` from cluster `{}`",
-                minimal_object.object_id.as_ref().unwrap(),
-                cluster_id
-            );
-            let object = delete_project(
-                configuration,
-                cluster_id,
-                minimal_object.object_id.as_ref().unwrap().as_ref(),
-            )
-            .await;
-            match object {
-                Err(e) => {
-                    error!(
-                        "Failed to delete project `{}` from cluster `{}`: {}",
-                        minimal_object.object_id.as_ref().unwrap(),
-                        cluster_id,
-                        e
-                    );
-                    Err(e)
-                }
-                Ok(delete_result) => match delete_result {
-                    Ok(project) => {
-                        info!(
-                            "Successfully deleted project: {}",
-                            project
-                                .metadata
-                                .as_ref()
-                                .and_then(|m| m.name.as_ref())
-                                .unwrap_or(&"unknown".to_string())
-                        );
-                        Ok(CreatedObject::Project(project))
-                    }
-                    Err(status) => {
-                        if status.code.unwrap_or(200) == 404 {
-                            warn!(
-                                "Project {} not found or already deleted",
-                                minimal_object.object_id.as_ref().unwrap()
-                            );
-                        } else {
-                            info!("Deletion returned status: {:?}", status);
-                        }
-                        Ok(CreatedObject::Status(status))
-                    }
-                },
-            }
-        }
-        ObjectType::RoleTemplate => {
-            if minimal_object.object_id.is_none() {
-                anyhow::bail!(ConversionError::InvalidValue {
-                    field: "object_id".into(),
-                    reason: "object_id is required".into(),
-                });
-            }
-            info!( "Deleting role-template `{}`", minimal_object.object_id.as_ref().unwrap() );
-            let object = delete_role_template( configuration, minimal_object.object_id.as_ref().unwrap().as_ref()).await;
-            match object {
-                Ok(object) => {
-                    info!("Deleted role-template `{}`", minimal_object.object_id.as_ref().unwrap() );
-                    Ok(CreatedObject::Status(object))
-                }
-                Err(e) => {
-                    error!("Failed to delete role-template `{}`: {}", minimal_object.object_id.as_ref().unwrap(), e);
-                    Err(e)
-                }
-            }
-        }
+            Project::delete(configuration, name, namespace).await
+        },
         ObjectType::ProjectRoleTemplateBinding => {
-            let cluster_id = minimal_object
-                .namespace
-                .as_deref()
-                .unwrap_or("<no-namespace>");
-            info!(
-                "Deleting prtb `{}` from cluster `{}`",
-                minimal_object.object_id.as_ref().unwrap(),
-                cluster_id
-            );
-            let object = delete_project_role_template_binding(
-                configuration,
-                cluster_id,
-                minimal_object.object_id.as_ref().unwrap().as_ref(),
-            )
-            .await;
-            match object {
-                Ok(object) => {
-                    info!(
-                        "Deleted prtb `{}` from cluster `{}`",
-                        minimal_object.object_id.as_ref().unwrap(),
-                        cluster_id
-                    );
-                    Ok(CreatedObject::Status(object))
-                }
-                Err(e) => {
-                    error!(
-                        "Failed to delete prtb `{}` from cluster `{}`: {}",
-                        minimal_object.object_id.as_ref().unwrap(),
-                        cluster_id,
-                        e
-                    );
-                    Err(e)
-                }
-            }
-        }
-        _ => panic!("Unsupported object type: {:?}", object_type),
+            ProjectRoleTemplateBinding::delete(configuration, name, namespace).await
+            // ProjectRoleTemplateBinding::delete(configuration, name, namespace).await?;
+        },
+        ObjectType::RoleTemplate => {
+            RoleTemplate::delete(configuration, name, namespace).await
+            // RoleTemplate::delete(configuration, name, namespace).await?;
+        },
+        _ => return Err(anyhow::anyhow!("Unsupported object type: {:?}", object_type)),
     }
+    
 }
+
 
 /// Creates objects from files in the given directory
 ///
@@ -397,21 +429,25 @@ pub async fn create_objects(
                 // Spawn task to create role template
                 handles_role_templates.push(tokio::spawn(async move {
                     info!(path = %file_path.display(), "Creating role-template from file");
-                    let role_template = load_object::<RoleTemplate>(&file_path, &format).await?;
-                    let rancher_rt = IoCattleManagementv3RoleTemplate::try_from(role_template)?;
-                    let created = create_role_template(&config, rancher_rt).await?;
-                    info!(
-                        "Created role-template: {}",
-                        created.metadata.as_ref().unwrap().name.as_ref().unwrap()
-                    );
-                    Ok((file_path, CreatedObject::RoleTemplate(created)))
+                    let role_template = load_object::<RoleTemplate>(&file_path).await?;
+                    let created = role_template.create(&config).await?;
+                    match created {
+                        CreatedObject::RoleTemplate(ref object) => {
+                            info!( "Created role-template: {}", object.metadata.as_ref().unwrap().name.as_ref().unwrap() );
+                            Ok((file_path, created))
+                        }
+                        other => {
+                            error!( "Failed to create role-template: {:#?}", other );
+                            Err(anyhow::anyhow!("Failed to create role-template"))
+                        },
+                    }
                 }));
             }
             ObjectType::Project => {
                 // Spawn task to create project
                 handles_projects.push(tokio::spawn(async move {
                     info!(path = %file_path.display(), "Creating project from file");
-                    let project = load_object::<Project>(&file_path, &format).await?;
+                    let project = load_object::<Project>(&file_path).await?;
                     let mut rancher_p = IoCattleManagementv3Project::try_from(project)?;
                     let cluster_name = rancher_p
                             .spec
@@ -540,7 +576,7 @@ pub async fn create_objects(
         let format = file_format.clone();
         prtb_handles.push(tokio::spawn(async move {
             info!(path = %file_path.display(), "Creating project-role-template-binding from file");
-            let prtb = load_object::<ProjectRoleTemplateBinding>(&file_path, &format).await?;
+            let prtb = load_object::<ProjectRoleTemplateBinding>(&file_path).await?;
             let display_name = prtb.id.clone();
             let mut rancher_prtb = IoCattleManagementv3ProjectRoleTemplateBinding::try_from(prtb)?;
             let project_id = rancher_prtb

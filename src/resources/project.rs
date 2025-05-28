@@ -1,15 +1,14 @@
 use std::path::Path;
 
-use anyhow::Result;
-
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use serde_diff::SerdeDiff;
-
 use similar::{ChangeTag, TextDiff};
-
 use serde_json::Value;
+use tokio::fs::{metadata, read_to_string};
+use tracing::{error, info, trace};
+use reqwest::{ StatusCode};
 
-use reqwest::StatusCode;
 
 use rancher_client::{
     apis::{
@@ -33,19 +32,16 @@ use rancher_client::{
         IoK8sApimachineryPkgApisMetaV1Status,
     },
 };
-use tokio::fs::{metadata, read_to_string};
-use tracing::{error, info, trace};
+
 
 use crate::{
     deserialize_object,
     utils::file::{file_extension_from_format, FileFormat},
 };
-
 use crate::utils::logging::log_api_error;
-
-use crate::models::ResourceVersionMatch;
-
 use crate::utils::diff::diff_boxed_hashmap_string_string;
+use crate::traits::RancherResource;
+use crate::models::{CreatedObject, ObjectType, ResourceVersionMatch};
 
 pub const PROJECT_EXCLUDE_PATHS: &[&str] = &[
     "metadata.creationTimestamp",
@@ -57,6 +53,102 @@ pub const PROJECT_EXCLUDE_PATHS: &[&str] = &[
     "spec.resourceQuota.usedLimit",
     "status",
 ];
+
+
+impl RancherResource for Project {
+    type ApiType = IoCattleManagementv3Project;
+
+    
+    fn resource_type() -> ObjectType {
+        ObjectType::Project
+    }
+    
+    fn exclude_paths() -> &'static [&'static str] {
+        PROJECT_EXCLUDE_PATHS
+    }
+    
+    fn try_from_api(value: Self::ApiType) -> Result<Self> {
+        Project::try_from(value)
+    }
+    
+    fn try_into_api(self) -> Result<Self::ApiType> {
+        Ok(IoCattleManagementv3Project::try_from(self)?)
+    }
+    
+    fn id(&self) -> Option<String> {
+        self.id.clone()
+    }
+    
+    fn namespace(&self) -> Option<String> {
+        Some(self.cluster_name.clone()) // Assuming cluster_id is used as namespace
+    }
+    
+    fn resource_version(&self) -> Option<String> {
+        self.resource_version.clone()
+    }
+    
+    async fn list(config: &Configuration, namespace: Option<&str>) -> Result<Vec<Self::ApiType>> {
+        let ns = namespace.ok_or_else(|| anyhow::anyhow!("Namespace is required for listing projects"))?;
+        
+        let project_list = get_projects( config, ns, None, None, None, None, None, None ).await?;
+        
+        Ok(project_list.items)
+    }
+    
+    async fn get(config: &Configuration, name: &str, namespace: &str) -> Result<Self> {
+        let result = find_project( config, namespace, name, None ).await;
+        
+        let project = Self::handle_api_error(result, &format!("get project {}", name))?;
+        Self::try_from_api(project)
+    }
+    
+    async fn create(&self, config: &Configuration) -> Result<CreatedObject> {
+        let ns = self.namespace().ok_or_else(|| anyhow::anyhow!("Namespace is required for creating projects"))?;
+        // Convert to API type
+        let project_api = self.clone().try_into_api()?;
+        
+        // Call API
+        let result = create_project( config, &ns, project_api ).await?;
+        
+        // Convert response to CreatedObject
+        Ok(CreatedObject::Project(result))
+    }
+    
+
+    async fn update(&self, config: &Configuration, patch_value: Value) -> Result<CreatedObject> {
+        let ns = self.namespace().ok_or_else(|| anyhow::anyhow!("Namespace is required for updating projects"))?;
+    
+        let result = update_project(
+            config,
+            &self.id().unwrap_or_default(),
+            &ns,
+            patch_value
+        ).await?;
+        Ok(CreatedObject::Project(result))
+    }
+    
+    async fn delete(config: &Configuration, name: &str, namespace: &str) -> Result<CreatedObject> {
+        // Call API, return of Result<Result<IoCattleManagementv3Project, IoK8sApimachineryPkgApisMetaV1Status>, Error>
+        let result = delete_project(
+            config,
+            namespace,
+            name,
+        ).await?;
+        
+        match result {
+            Ok(project) => {
+                Ok(CreatedObject::Project(project))
+            }
+            Err(status) => {
+                Ok(CreatedObject::Status(status))
+            }
+        }
+    }
+}
+
+
+
+
 
 /// Create a project from a given configuration
 /// # Arguments
@@ -167,7 +259,7 @@ pub async fn create_project(
                         }
                         StatusCode::CONFLICT => {
                             format!(
-                                "Project with ID: {} in cluster {} already exists",
+                                "Conflict while creating Project with ID: {} in cluster {}. Already exists",
                                 project_id, cluster_id
                             )
                         }
@@ -191,20 +283,27 @@ pub async fn create_project(
     }
 }
 
-/// Get all projects for a given namespace (cluster_id) from an endpoint using the provided configuration
+
+/// Get the list of projects for a cluster
 ///
 /// # Arguments
 ///
 /// * `configuration` - The configuration to use for the request
-/// * `cluster_id` - The ID of the cluster (namespace) to get the projects for
+/// * `cluster_id` - The ID of the cluster to get the project list for
+/// * `field_selector` - The field selector to apply to the project list
+/// * `label_selector` - The label selector to apply to the project list
+/// * `limit` - The limit to apply to the project list
+/// * `resource_version` - The resource version to use for the request
+/// * `resource_version_match` - The resource version match to use for the request
+/// * `continue_` - The continue token to use for the request
 ///
 /// # Returns
 ///
-/// * `ListManagementCattleIoV3ProjectList` - The list of projects
+/// * `IoCattleManagementv3ProjectList` - The list of projects
 ///
 /// # Errors
 ///
-/// * `Error<ListManagementCattleIoV3NamespacedProjectError>` - The error that occurred while trying to get the projects
+/// * `anyhow::Error` - The error that occurred while trying to get the project list
 #[async_backtrace::framed]
 pub async fn get_projects(
     configuration: &Configuration,
@@ -308,7 +407,6 @@ pub async fn get_projects(
                     };
                     error!("{}", msg);
                     Err(anyhow::anyhow!(msg))
-
                 },
                 _ => {
                     let msg = format!(
@@ -371,16 +469,11 @@ pub async fn find_project(
                         Ok(data)
                     }
                     Err(deserialize_err) => {
-                        let err = anyhow::anyhow!(
-                            "Failed to deserialize project response: {}",
-                            deserialize_err
-                        );
-                        log_api_error("find_project:deserialize", &err);
-                        Err(err)
+                        error!("Failed to deserialize response: {}", deserialize_err);
+                        Err(anyhow::anyhow!(deserialize_err))
                     }
                 }
             }
-
             status => {
                 let err = match serde_json::from_str::<serde_json::Value>(&response_content.content)
                 {
@@ -593,10 +686,7 @@ pub async fn delete_project(
     cluster_id: &str,
     project_id: &str,
 ) -> Result<Result<IoCattleManagementv3Project, IoK8sApimachineryPkgApisMetaV1Status>> {
-    info!(
-        "Deleting project with ID: {} in cluster: {}",
-        project_id, cluster_id
-    );
+    // info!( "Deleting project with ID: {} in cluster: {}", project_id, cluster_id );
     let api_result = delete_management_cattle_io_v3_namespaced_project(
         configuration,
         project_id,

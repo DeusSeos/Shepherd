@@ -28,7 +28,8 @@ pub mod traits;
 
 use anyhow::{bail, Context, Result};
 
-use utils::file::{file_extension_from_format, get_file_name_for_object, FileFormat};
+use traits::RancherResource;
+use utils::file::{file_extension_from_format, file_format_from_path, get_file_name_for_object, FileFormat};
 use utils::logging::log_api_error;
 
 use models::{ConversionError, CreatedObject, ObjectType};
@@ -442,17 +443,38 @@ fn remove_path_and_return(value: &mut Value, path: &[&str]) -> Option<Value> {
 }
 
 // load an object from the file path specified
-pub async fn load_object<T: serde::de::DeserializeOwned>(
-    file_path: &Path,
-    file_format: &FileFormat,
-) -> Result<T> {
-    let contents = read_to_string(file_path).await?;
+// pub async fn load_object<T: serde::de::DeserializeOwned>(
+//     file_path: &Path,
+//     file_format: &FileFormat,
+// ) -> Result<T> {
+//     let contents = read_to_string(file_path).await?;
+//     match file_format {
+//         FileFormat::Yaml => Ok(serde_yaml::from_str(&contents)?),
+//         FileFormat::Json => Ok(serde_json::from_str(&contents)?),
+//         FileFormat::Toml => Ok(toml::from_str(&contents)?),
+//     }
+// }
+
+pub async fn load_object<T: RancherResource>(path: &Path) -> Result<T> {
+    let file_format = file_format_from_path(path);
+    let content = std::fs::read_to_string(path)?;
+    
     match file_format {
-        FileFormat::Yaml => Ok(serde_yaml::from_str(&contents)?),
-        FileFormat::Json => Ok(serde_json::from_str(&contents)?),
-        FileFormat::Toml => Ok(toml::from_str(&contents)?),
+        FileFormat::Yaml => {
+            serde_yaml::from_str(&content)
+                .map_err(|e| anyhow::anyhow!("Failed to parse YAML: {}", e))
+        },
+        FileFormat::Json => {
+            serde_json::from_str(&content)
+                .map_err(|e| anyhow::anyhow!("Failed to parse JSON: {}", e))
+        },
+        FileFormat::Toml => {
+            toml::from_str(&content)
+                .map_err(|e| anyhow::anyhow!("Failed to parse TOML: {}", e))
+        },
     }
 }
+
 
 /// Polls until a Rancher object becomes available or a timeout occurs.
 ///
