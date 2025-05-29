@@ -263,7 +263,7 @@ mod tests {
 
         let result = Cluster::try_from(ioc);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ConversionError::MissingField("missing name".into()));
+        assert_eq!(result.unwrap_err(), ConversionError::MissingField("missing metadata.name".into()));
     }
 
     #[test]
