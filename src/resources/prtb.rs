@@ -506,7 +506,7 @@ pub async fn get_namespaced_project_role_template_bindings(
             match response_content.status {
                 StatusCode::OK => match serde_json::from_str(&response_content.content) {
                     Ok(data) => {
-                        debug!("Successfully deserialized response content");
+                        debug!("Successfully deserialized prtb response content");
                         Ok(data)
                     }
                     Err(deserialize_err) => {

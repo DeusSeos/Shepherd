@@ -23,7 +23,7 @@ use rancher_client::{
     },
 };
 use serde_json::Value;
-use tracing::{debug, error, info, trace};
+use tracing::{error, info, trace};
 
 
 pub const RT_EXCLUDE_PATHS: &[&str] = &[

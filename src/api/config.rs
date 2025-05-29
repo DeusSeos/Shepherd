@@ -110,6 +110,11 @@ pub struct ShepherdConfig {
     pub remote_git_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cluster_names: Option<Vec<String>>,
+    #[serde(default = "default_loop_interval")]
+    pub loop_interval: u64,
+    #[serde(default = "default_retry_delay")]
+    pub retry_delay: u64,
+
 }
 
 impl ShepherdConfig {
@@ -118,7 +123,15 @@ impl ShepherdConfig {
         let config: ShepherdConfig = toml::from_str(&file).context("Failed to parse config file")?;
         Ok(config)
     }
+}
 
+
+fn default_loop_interval() -> u64 {
+    300
+}
+
+fn default_retry_delay() -> u64 {
+    200
 }
 
 
@@ -142,6 +155,8 @@ impl Display for ShepherdConfig {
                 .map(|v| v.join(", "))
                 .unwrap_or_else(|| "<none>".into())
         )?;
+        writeln!(f, "Loop interval: {} seconds", self.loop_interval)?;
+        writeln!(f, "Retry delay: {} milliseconds", self.retry_delay)?;
         Ok(())
     }
 }

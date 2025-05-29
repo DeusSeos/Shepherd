@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_diff::SerdeDiff;
 use similar::{ChangeTag, TextDiff};

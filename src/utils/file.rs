@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 
 use serde::{de::DeserializeOwned, Serialize, Deserialize};
-use tokio::{fs::OpenOptions, io::AsyncWriteExt, task::JoinHandle};
+use tokio::{fs::OpenOptions, io::AsyncWriteExt, task::JoinHandle, fs::read_dir};
 use tracing::{debug, error};
 
 use crate::{load_object, models::{CreatedObject, MinimalObject, ObjectType}, resources::project::Project, resources::prtb::ProjectRoleTemplateBinding, resources::rt::RoleTemplate, serialize_object};
@@ -222,6 +222,29 @@ where
     file.write_all(serialized.as_bytes())
         .await
         .context("Failed to write object to file")
+}
+
+
+
+
+/// Checks if a directory is empty
+///
+/// # Arguments
+/// * `dir_path` - Path to the directory to check
+///
+/// # Returns
+/// * `Ok(true)` - If the directory exists and is empty
+/// * `Ok(false)` - If the directory exists and is not empty
+/// * `Err` - If the directory doesn't exist or cannot be read
+pub async fn is_directory_empty<P: AsRef<Path>>(dir_path: P) -> Result<bool> {
+    let mut dir_reader = read_dir(dir_path.as_ref())
+        .await
+        .with_context(|| format!("Failed to read directory: {}", dir_path.as_ref().display()))?;
+    
+    // Check if there's at least one entry
+    let is_empty = dir_reader.next_entry().await?.is_none();
+    
+    Ok(is_empty)
 }
 
 pub fn file_format_from_extension(extension: &str) -> FileFormat {
