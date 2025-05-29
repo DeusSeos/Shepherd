@@ -25,8 +25,8 @@ use rancher_cac::modify::{compare_and_update_configurations, create_objects, del
 
 use rancher_cac::download_current_configuration;
 
-use rancher_client::apis::configuration::{self, Configuration};
-use tokio::{signal, time::interval};
+use rancher_client::apis::configuration::{Configuration};
+use tokio::time::interval;
 
 use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
