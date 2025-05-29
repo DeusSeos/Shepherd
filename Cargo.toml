@@ -2,10 +2,16 @@
 name = "rancher-cac"
 version = "0.1.0"
 edition = "2021"
+authors = ["DeusSeos"]
 
 [dependencies]
+anyhow = "1.0.98"
 async-backtrace = "0.2.7"
+async-recursion = "1.1.1"
 chrono = { version = "0.4.41", features = ["serde"] }
+fastrand = "2.3.0"
+futures = "0.3.31"
+futures-util = "0.3.31"
 git2 = "0.20.1"
 json-patch = "4.0.0"
 rancher_client = "1.0.5"
@@ -16,5 +22,8 @@ serde-diff = "0.4"
 serde_json = "1.0.140"
 serde_yaml = "0.9.34"
 similar = "2.7.0"
+thiserror = "2.0.12"
 tokio = { version = "1.45.0", features = ["full"] }
 toml = "0.8.21"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }

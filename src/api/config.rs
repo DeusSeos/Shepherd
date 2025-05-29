@@ -1,9 +1,11 @@
-use std::{collections::HashMap, fmt::Display};
+use std::fmt;
+use std::{collections::HashMap, fmt::Display, path::PathBuf};
 
 use rancher_client::models::{IoCattleManagementv3Cluster, IoCattleManagementv3Project, IoCattleManagementv3ProjectRoleTemplateBinding, IoCattleManagementv3RoleTemplate};
 use serde::{Deserialize, Serialize};
+use anyhow::{Result, Context};
 
-use crate::{cluster::Cluster, project::Project, prtb::ProjectRoleTemplateBinding, rt::RoleTemplate};
+use crate::{cluster::Cluster, utils::file::FileFormat, resources::project::Project, resources::prtb::ProjectRoleTemplateBinding, resources::rt::RoleTemplate};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ClusterConfig {
@@ -18,7 +20,7 @@ impl Display for ClusterConfig {
         writeln!(f, "Cluster: {}", self.cluster.display_name)?;
         writeln!(f, "Role Templates:")?;
         for rt in &self.role_templates {
-            writeln!(f, "  - {:?}", rt.display_name)?;
+            writeln!(f, "  - {:?}", rt.display_name.as_ref().unwrap())?;
         }
         writeln!(f, "Projects:")?;
         for (project_id, (project, bindings)) in &self.projects {
@@ -42,7 +44,6 @@ pub struct RancherClusterConfig {
 
 
 // conversion from ClusterConfig to RancherClusterConfig
-
 impl TryFrom<ClusterConfig> for RancherClusterConfig {
     type Error = &'static str;
 
@@ -95,5 +96,67 @@ impl TryFrom<ClusterConfig> for RancherClusterConfig {
             role_templates: rancher_role_templates,
             projects: rancher_projects,
         })
+    }
+}
+
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ShepherdConfig {
+    pub rancher_config_path: PathBuf,
+    pub endpoint_url: String,
+    pub file_format: FileFormat,
+    pub token: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote_git_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cluster_names: Option<Vec<String>>,
+    #[serde(default = "default_loop_interval")]
+    pub loop_interval: u64,
+    #[serde(default = "default_retry_delay")]
+    pub retry_delay: u64,
+
+}
+
+impl ShepherdConfig {
+    pub fn from_file(path: &str) -> Result<Self> {
+        let file = std::fs::read_to_string(path).context("Failed to read config file")?;
+        let config: ShepherdConfig = toml::from_str(&file).context("Failed to parse config file")?;
+        Ok(config)
+    }
+}
+
+
+fn default_loop_interval() -> u64 {
+    300
+}
+
+fn default_retry_delay() -> u64 {
+    200
+}
+
+
+impl Display for ShepherdConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Rancher config path: {}", self.rancher_config_path.display())?;
+        writeln!(f, "Endpoint URL: {}", self.endpoint_url)?;
+        writeln!(f, "File format: {}", self.file_format)?;
+        writeln!(
+            f,
+            "Remote git URL: {}",
+            self.remote_git_url
+                .as_deref()
+                .unwrap_or("<none>")
+        )?;
+        writeln!(
+            f,
+            "Cluster names: {}",
+            self.cluster_names
+                .as_ref()
+                .map(|v| v.join(", "))
+                .unwrap_or_else(|| "<none>".into())
+        )?;
+        writeln!(f, "Loop interval: {} seconds", self.loop_interval)?;
+        writeln!(f, "Retry delay: {} milliseconds", self.retry_delay)?;
+        Ok(())
     }
 }

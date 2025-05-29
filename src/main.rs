@@ -1,219 +1,213 @@
 #![allow(unused_variables)]
-#![allow(unused_imports)]
+// #![allow(unused_imports)]
 
-use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
 
-use rancher_cac::cluster::Cluster;
-use rancher_cac::config::RancherClusterConfig;
-use rancher_cac::{clean_up_value, compute_cluster_diff, create_json_patch, download_current_configuration, load_configuration, load_configuration_from_rancher, load_project, rancher_config_init, FileFormat, ResourceVersionMatch};
-use rancher_cac::git::{commit_changes, init_git_repo_with_main_branch, push_repo_to_remote};
-use rancher_cac::project::{find_project, get_projects, show_project_diff, show_text_diff, update_project, Project, PROJECT_EXCLUDE_PATHS};
+use anyhow::{Context, Result};
 
+use rancher_cac::api::client::ShepherdClient;
+use rancher_cac::api::config;
 
-use rancher_client::models::IoCattleManagementv3Project;
-use reqwest_middleware::ClientBuilder;
-use serde_json::json;
+use rancher_cac::error::{handle_result_collection, AppError};
 
+use rancher_cac::models::{MinimalObject, ObjectType};
+use rancher_cac::utils::file::{
+    get_minimal_object_from_contents, is_directory_empty, write_back_objects, FileFormat,
+};
+use rancher_cac::utils::git::{
+    commit_changes, get_deleted_files_and_contents, get_modified_files, get_new_uncommited_files,
+    init_git_repo_with_main_branch,
+};
 
-/*
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create configuration using
-    // the provided URL and token
-    // URL: https://rancher.rd.localhost/v3
-    // Token: token-xxzn4:mlcl7q4m2vl6mq8hfzdffh5f5fh4wfzqqhzbm52bqzkpmhdg2c7bf7
+use rancher_cac::modify::{compare_and_update_configurations, create_objects, delete_objects};
 
-    let mut configuration = rancher_config_init(
-        "https://rancher.rd.localhost",
-        "token-xxzn4:mlcl7q4m2vl6mq8hfzdffh5f5fh4wfzqqhzbm52bqzkpmhdg2c7bf7",
-    );
+use rancher_cac::download_current_configuration;
 
-    // modify the configuration client to allow self-signed certificates
-    let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .build()
-        .unwrap();
+use rancher_client::apis::configuration::{Configuration};
+use tokio::time::interval;
 
-    configuration.client = ClientBuilder::new(client).build();
+use tracing::{debug, error, info};
+use tracing_subscriber::EnvFilter;
 
-    // Create a path to the folder where the configuration will be saved
-    // let path = std::path::PathBuf::from("/tmp/rancher_config");
+// const RETRY_DELAY: Duration = Duration::from_millis(200);
+// const LOOP_INTERVAL: Duration = Duration::from_secs(60);
 
-    let path = std::path::PathBuf::from("/Users/dc/Documents/Rust/rancher_config");
+fn init_tracing() {
+    // Initialize the tracing subscriber using RUST_LOG environment variable
+    // ignore statements not from this crate
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .with_file(true)
+        .with_line_number(true)
+        .init();
+}
 
-    // Create a file format to save the configuration in
-    let file_format = FileFormat::Yaml;
+// /*
+async fn run_sync(
+    client_config: Arc<Configuration>,
+    config_folder_path: &Path,
+    remote_url: &str,
+    file_format: FileFormat,
+    cluster_ids: Vec<String>,
+    loop_interval: u64,
+    retry_delay: u64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Create a interval ticker
+    let mut interval_timer = interval(Duration::from_secs(loop_interval));
 
-    let download = true;
+    let retry_delay = Duration::from_millis(retry_delay);
 
-    if download {
-        // Download the current configuration from the Rancher API
-        download_current_configuration(&configuration, &path, &file_format).await;
+    loop {
+        interval_timer.tick().await;
 
-        // set up the remote url to be git@github.com/DeusSeos/rancher_config.git
-        let remote_url = "git@github.com:DeusSeos/rancher_config.git";
+        info!("Starting scheduled run at {}", chrono::Utc::now());
 
-        // Initialize a git repository in the path or if error, commit a change with current datetime
-        init_git_repo_with_main_branch(&path, &remote_url).unwrap_or_else(|_| {
+        let download = download_required(&config_folder_path).await?;
+        if download {
+            download_current_configuration(
+                &client_config,
+                &config_folder_path,
+                &file_format,
+            )
+            .await?;
+            
+            // Initialize a git repository in the path or if error, commit a change with current datetime
+            init_git_repo_with_main_branch(&config_folder_path, &remote_url).unwrap_or_else(|_| {
             // commit a change with current datetime
             let now = chrono::Utc::now();
             let datetime = now.format("%Y-%m-%d %H:%M:%S").to_string();
             let message = format!("Updated configuration at {}", datetime);
-            commit_changes(&path, &message).unwrap();
+            commit_changes(&config_folder_path, &message).unwrap();
             println!(
-                "Error initializing git repository, committed changes with message: {}",
+                "Git repository initialized or already exists, committed changes with message: {}",
                 message
             );
         });
+
+        } else {
+            // TODO: change this to use cluster id fetched from our custom config file
+            let cluster_id = cluster_ids[0].clone();
+
+            let new_files = get_new_uncommited_files(&config_folder_path).await?;
+
+            let modified_files = get_modified_files(&config_folder_path).await?;
+
+            let deleted_files_and_contents =
+                get_deleted_files_and_contents(&config_folder_path).await?;
+
+            info!("New files: {:?}", new_files);
+
+            info!("Modified files: {:?}", modified_files);
+
+            info!(
+                "Deleted files: {:?}",
+                deleted_files_and_contents
+                    .iter()
+                    .map(|(object_type, path, _)| (object_type, path))
+                    .collect::<Vec<_>>()
+            );
+
+            let update_objects = compare_and_update_configurations(
+                client_config.clone(),
+                &config_folder_path,
+                &cluster_id,
+                &file_format,
+            )
+            .await;
+            let created_objects =
+                create_objects(client_config.clone(), new_files, 10, 5, retry_delay).await;
+
+            let (successes, mut errors) = handle_result_collection(created_objects);
+
+            // Write back the successfully created objects
+            write_back_objects(successes, file_format).await?;
+
+            let mut objects_to_delete: Vec<(ObjectType, MinimalObject)> = Vec::new();
+
+            for (object_type, path, contents) in deleted_files_and_contents {
+                let minimal_object =
+                    get_minimal_object_from_contents(object_type, &contents, &file_format)
+                        .await
+                        .unwrap();
+                objects_to_delete.push((object_type, minimal_object));
+            }
+            let deleted_objects = delete_objects(client_config.clone(), objects_to_delete).await;
+            let (_, delete_errors) = handle_result_collection(deleted_objects);
+
+            errors.extend(delete_errors);
+        }
+        info!("Run complete at {}", chrono::Utc::now());
     }
+}
 
-    let cluster_id = "local";
-    let project_id = "p-w82pc";
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    //Setup logging
 
-    // load project from path
-    let loaded_project = load_project(
-        &path,
-        configuration.base_path.clone().as_str(),
-        cluster_id,
-        project_id,
-        file_format,
-    )
-    .await;
+    init_tracing();
 
-    // let loaded_project_json = json!({ "cluster_name": "local", "id": "p-w82pc", "description": "blah blah blah meh", "annotations": { "lifecycle.cattle.io/create.mgmt-project-rbac-remove": "true", "authz.management.cattle.io/creator-role-bindings": "{\"created\":[\"project-owner\"],\"required\":[\"project-owner\"]}", "lifecycle.cattle.io/create.project-namespace-auth_local": "true", "field.cattle.io/creatorId": "user-jzh8l", "fee": "fii", "fo": "fum" }, "labels": { "foo": "bar2", "changeRequest": "CHG829112", "cattle.io/creator": "norman", "another": "two" }, "container_default_resource_limit": { "limitsCpu": "11m", "limitsMemory": "32Mi", "requestsCpu": "5m", "requestsMemory": "16Mi" }, "display_name": "5", "namespace": "local", "resource_version": "1246368", "uid": "2bffd4eb-2c79-4153-9124-da1420ba57bc", "namespace_default_resource_quota": { "limit": { "limitsCpu": "500m", "limitsMemory": "512Mi", "requestsCpu": "5m", "requestsMemory": "32Mi" } }, "resource_quota": { "limitsCpu": "1000m", "limitsMemory": "1024Mi", "requestsCpu": "25m", "requestsMemory": "128Mi" } });
-    // let loaded_project = serde_json::from_value::<Project>(loaded_project_json).unwrap();
+    // get home path and concatenate with .config/shepherd/config.toml
+    let home_path = std::env::var("HOME")
+        .map_err(|_| AppError::Other("HOME environment variable not set".to_string()))?;
+    let app_config_path = home_path + "/.config/shepherd/config.toml";
+    let app_config = config::ShepherdConfig::from_file(&app_config_path)
+        .context(format!("Failed to load config file: {}", app_config_path));
 
-    // fetch the project from cluster
-    let live_rancher_project = find_project(&configuration, cluster_id, project_id)
-        .await
-        .unwrap();
+    // if we have an error spit out the error and exit
+    let app_config = match app_config {
+        Ok(config) => config,
+        Err(e) => {
+            error!("{}", e);
+            std::process::exit(1);
+        }
+    };
 
-    // convert to pretty json
-    // let live_rancher_json = serde_json::to_string_pretty(&live_rancher_project).unwrap();
+    debug!("App config: {}", app_config);
 
-
-    // let live_rancher_json = json!({ "apiVersion": "management.cattle.io/v3", "kind": "Project", "metadata": { "annotations": { "fee": "fii", "lifecycle.cattle.io/create.mgmt-project-rbac-remove": "true", "field.cattle.io/creatorId": "user-jzh8l", "lifecycle.cattle.io/create.project-namespace-auth_local": "true", "fo": "fum", "authz.management.cattle.io/creator-role-bindings": "{\"created\":[\"project-owner\"],\"required\":[\"project-owner\"]}" }, "creationTimestamp": "2024-12-22T15:43:56Z", "finalizers": [ "clusterscoped.controller.cattle.io/project-namespace-auth_local", "controller.cattle.io/mgmt-project-rbac-remove" ], "generateName": "p-", "generation": 37, "labels": { "changeRequest": "CHG829112", "cattle.io/creator": "norman", "another": "three", "foo": "bar2" }, "managedFields": [ { "apiVersion": "management.cattle.io/v3", "fieldsType": "FieldsV1", "fieldsV1": { "f:metadata": { "f:annotations": { "f:lifecycle.cattle.io/create.project-namespace-auth_local": {} }, "f:finalizers": { ".": {}, "v:\"clusterscoped.controller.cattle.io/project-namespace-auth_local\"": {} } } }, "manager": "rancher-v2.10.1-rbac-handler-base", "operation": "Update", "time": "2024-12-22T15:43:56Z" }, { "apiVersion": "management.cattle.io/v3", "fieldsType": "FieldsV1", "fieldsV1": { "f:metadata": { "f:annotations": { ".": {}, "f:fee": {}, "f:field.cattle.io/creatorId": {}, "f:fo": {} }, "f:generateName": {}, "f:labels": { ".": {}, "f:another": {}, "f:cattle.io/creator": {}, "f:changeRequest": {}, "f:foo": {} } }, "f:spec": { ".": {}, "f:clusterName": {}, "f:containerDefaultResourceLimit": { ".": {}, "f:limitsCpu": {}, "f:limitsMemory": {}, "f:requestsCpu": {}, "f:requestsMemory": {} }, "f:description": {}, "f:displayName": {}, "f:namespaceDefaultResourceQuota": { ".": {}, "f:limit": { "f:limitsCpu": {}, "f:limitsMemory": {}, "f:requestsCpu": {}, "f:requestsMemory": {} } }, "f:resourceQuota": { ".": {}, "f:limit": { "f:limitsCpu": {}, "f:limitsMemory": {}, "f:requestsCpu": {}, "f:requestsMemory": {} } } } }, "manager": "Go-http-client", "operation": "Update", "time": "2025-05-08T21:25:36Z" }, { "apiVersion": "management.cattle.io/v3", "fieldsType": "FieldsV1", "fieldsV1": { "f:metadata": { "f:annotations": { "f:authz.management.cattle.io/creator-role-bindings": {}, "f:lifecycle.cattle.io/create.mgmt-project-rbac-remove": {} }, "f:finalizers": { "v:\"controller.cattle.io/mgmt-project-rbac-remove\"": {} } }, "f:spec": { "f:namespaceDefaultResourceQuota": { "f:limit": {} }, "f:resourceQuota": { "f:limit": {}, "f:usedLimit": {} } }, "f:status": { "f:conditions": {} } }, "manager": "rancher", "operation": "Update", "time": "2025-05-08T21:25:36Z" } ], "name": "p-w82pc", "namespace": "local", "resourceVersion": "1246447", "uid": "2bffd4eb-2c79-4153-9124-da1420ba57bc" }, "spec": { "clusterName": "local", "containerDefaultResourceLimit": { "limitsCpu": "10m", "limitsMemory": "32Mi", "requestsCpu": "5m", "requestsMemory": "16Mi" }, "description": "blah blah blah meh", "displayName": "5", "namespaceDefaultResourceQuota": { "limit": { "limitsCpu": "500m", "limitsMemory": "512Mi", "requestsCpu": "5m", "requestsMemory": "32Mi" } }, "resourceQuota": { "limit": { "limitsCpu": "1000m", "limitsMemory": "1024Mi", "requestsCpu": "25m", "requestsMemory": "128Mi" }, "usedLimit": {} } }, "status": { "conditions": [ { "lastUpdateTime": "2024-12-22T15:43:56Z", "status": "True", "type": "BackingNamespaceCreated" }, { "lastUpdateTime": "2024-12-22T15:43:57Z", "status": "True", "type": "CreatorMadeOwner" }, { "lastUpdateTime": "2024-12-22T15:43:56Z", "status": "True", "type": "InitialRolesPopulated" } ] } });
-    // let live_rancher_project = serde_json::from_value::<IoCattleManagementv3Project>(live_rancher_json).unwrap();
-
+    let client = ShepherdClient::new(&app_config.endpoint_url, &app_config.token, true);
+    let config_folder_path = app_config.rancher_config_path;
+    let remote_url = app_config.remote_git_url.unwrap();
+    let file_format = app_config.file_format;
+    let client_config = client.config.clone();
+    let cluster_ids = app_config.cluster_names.unwrap();
+    // in seconds
+    let loop_interval = app_config.loop_interval;
+    // in milliseconds
+    let retry_delay = app_config.retry_delay;
     
 
-
-    // check equality
-    if loaded_project == live_rancher_project {
-        // println!("Project is equal");
-    } else {
-        // println!("Project is not equal");
-        // convert the project to IoCattleManagementv3Project
-        let loaded_rancher_project: IoCattleManagementv3Project =
-            loaded_project.clone().try_into().unwrap();
-
-        // convert the live project to Value
-        let mut live_project_value: serde_json::Value = serde_json::to_value(live_rancher_project).unwrap();
-        let mut loaded_project_value: serde_json::Value = serde_json::to_value(loaded_rancher_project).unwrap();
-
-        clean_up_value(&mut live_project_value, PROJECT_EXCLUDE_PATHS);
-        clean_up_value(&mut loaded_project_value, PROJECT_EXCLUDE_PATHS);
-
-        // println!("live up {:#?}", live_project_value);
-        // println!("loaded up {:#?}", loaded_project_value);
-
-        let patch = create_json_patch::<IoCattleManagementv3Project>(&live_project_value, &loaded_project_value);
-        println!("patch {:#?}", patch);
-
-        // update the live project with the patch
-        let updated_project = update_project(&configuration, cluster_id, project_id, patch).await;
-
-        println!("updated project {:#?}", updated_project);
-
-        // show_text_diff(&project, &rancher_project);
-    }
-
-    // push the repo to the remote
-    // push_repo_to_remote(&path, &remote_url).unwrap();
+    run_sync(
+        client_config,
+        &config_folder_path,
+        &remote_url,
+        file_format,
+        cluster_ids,
+        loop_interval,
+        retry_delay,
+    )
+    .await?;
 
     Ok(())
 }
-*/
 
-
-
-use rancher_client::apis::management_cattle_io_v3_api::{list_management_cattle_io_v3_namespaced_project, read_management_cattle_io_v3_namespaced_project};
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>>  {
-    // 1️⃣ build your config (fill in base_path / api_key as appropriate)
-    let mut configuration = rancher_config_init(
-        "https://rancher.rd.localhost",
-        "token-xxzn4:mlcl7q4m2vl6mq8hfzdffh5f5fh4wfzqqhzbm52bqzkpmhdg2c7bf7",
-    );
-
-    // modify the configuration client to allow self-signed certificates
-    let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .build()
-        .unwrap();
-
-    configuration.client = ClientBuilder::new(client).build();
-
-    // // // 2️⃣ call with a fieldSelector
-    // let resp = list_management_cattle_io_v3_namespaced_project(
-    //     &configuration,
-    //     "local",               // namespace
-    //     None,                  // pretty
-    //     None,                  // allow_watch_bookmarks
-    //     None,                  // continue
-    //     None, // field_selector
-    //     Some("another=two"),                  // label_selector
-    //     None, None, None, None, None, None,
-    // )
-    // .await?;
-
-
-    // // 2️⃣ call with resourceVersionMatch and resourceVersion
-    // let resp = get_projects(
-    //     &configuration,
-    //     "local",                        // cluster_id
-    //     None,                           // field_selector
-    //     None,                           // label_selector
-    //     None,                          // limit
-    //     Some("1311731"),                           // resource_version
-    //     Some(ResourceVersionMatch::Exact), // resource_version_match
-    //     None,                          // continue
-    // )
-    // .await?;
-
-    // // 2️⃣ call with resourceVersion 
-    // // let resp = read_management_cattle_io_v3_namespaced_project(&configuration, "p-w82pc" , "local", Some("true"), Some("1288128") ).await?;
-
-
-    // println!("{:#?}", resp);
-
-    // load the cluster config
-    let path = std::path::PathBuf::from("/Users/dc/Documents/Rust/rancher_config");
-    let endpoint_url = configuration.base_path.clone();
-    let file_format = FileFormat::Yaml;
-    let cluster_id = "local";
-
-    // let cluster = load_configuration(&path, &endpoint_url, cluster_id, &file_format)
-    //     .await.map(|cluster_config| cluster_config.map(|c| println!( "{}", c)));
-
-    let desired_cluster_configuration = load_configuration(&path, &endpoint_url, cluster_id, &file_format)
-        .await.unwrap().unwrap();
-
-    let current_cluster_configuration = load_configuration_from_rancher(&configuration, cluster_id).await;
-
-    // convert to value
-    let current_cluster_value: serde_json::Value = serde_json::to_value(current_cluster_configuration).unwrap();
-    let desired_cluster: RancherClusterConfig = RancherClusterConfig::try_from(desired_cluster_configuration).unwrap();
-    let desired_cluster_value: serde_json::Value = serde_json::to_value(desired_cluster).unwrap();
-
-    let diff = compute_cluster_diff(&current_cluster_value, &desired_cluster_value);
-
-    for patch in diff{
-        println!("{:?}", patch);
+async fn download_required(config_folder_path: &Path) -> Result<bool, Box<dyn std::error::Error>> {
+    match is_directory_empty(config_folder_path).await {
+        Ok(true) => {
+            info!("Directory is empty: {}", config_folder_path.display());
+            // Handle empty directory case
+            Ok(true)
+        }
+        Ok(false) => {
+            info!("Directory is not empty: {}", config_folder_path.display());
+            // Handle non-empty directory case
+            Ok(false)
+        }
+        Err(e) => {
+            error!("Error checking directory: {}", e);
+            // Handle error
+            Ok(true)
+        }
     }
-
-
-
-    Ok(())
 }

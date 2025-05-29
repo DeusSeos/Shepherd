@@ -1,6 +1,7 @@
 /rancher_client_crate
 .cargo/
 Cargo.lock
+.env
 
 
 # Added by cargo
