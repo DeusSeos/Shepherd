@@ -1,10 +1,12 @@
 use std::fmt;
+use std::env;
 use std::{collections::HashMap, fmt::Display, path::PathBuf};
 
 use rancher_client::models::{IoCattleManagementv3Cluster, IoCattleManagementv3Project, IoCattleManagementv3ProjectRoleTemplateBinding, IoCattleManagementv3RoleTemplate};
 use serde::{Deserialize, Serialize};
 use anyhow::{Result, Context};
 
+use crate::utils::git::GitAuth;
 use crate::{cluster::Cluster, utils::file::FileFormat, resources::project::Project, resources::prtb::ProjectRoleTemplateBinding, resources::rt::RoleTemplate};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -114,14 +116,36 @@ pub struct ShepherdConfig {
     pub loop_interval: u64,
     #[serde(default = "default_retry_delay")]
     pub retry_delay: u64,
+    pub auth_method: GitAuth,
+    #[serde(default = "default_branch")]
+    pub branch: String
 
 }
 
 impl ShepherdConfig {
     pub fn from_file(path: &str) -> Result<Self> {
         let file = std::fs::read_to_string(path).context("Failed to read config file")?;
-        let config: ShepherdConfig = toml::from_str(&file).context("Failed to parse config file")?;
+        let mut config: ShepherdConfig = toml::from_str(&file).context("Failed to parse config file")?;
+
+        // Handle Git authentication method
+        config.auth_method = match (env::var("GIT_AUTH_METHOD"), env::var("GIT_SSH_KEY"), env::var("GIT_TOKEN")) {
+            (Ok(method), Ok(key), _) if method == "ssh_key" => GitAuth::SshKey(PathBuf::from(key)),
+            (Ok(method), _, Ok(token)) if method == "https_token" => GitAuth::HttpsToken(token),
+            (Ok(method), _, _) if method == "ssh_agent" => GitAuth::SshAgent,
+            (Ok(method), _, _) if method == "git_credential_helper" => GitAuth::GitCredentialHelper,
+            _ => GitAuth::SshAgent, // default
+        };
         Ok(config)
+    }
+
+    pub fn get_git_auth(&self) -> GitAuth {
+        match (env::var("GIT_AUTH_METHOD"), env::var("GIT_SSH_KEY"), env::var("GIT_TOKEN")) {
+            (Ok(method), Ok(key), _) if method == "ssh_key" => GitAuth::SshKey(PathBuf::from(key)),
+            (Ok(method), _, Ok(token)) if method == "https_token" => GitAuth::HttpsToken(token),
+            (Ok(method), _, _) if method == "ssh_agent" => GitAuth::SshAgent,
+            (Ok(method), _, _) if method == "git_credential_helper" => GitAuth::GitCredentialHelper,
+            _ => self.auth_method.clone(), // Use the value from the config file if environment variables are not set
+        }
     }
 }
 
@@ -132,6 +156,10 @@ fn default_loop_interval() -> u64 {
 
 fn default_retry_delay() -> u64 {
     200
+}
+
+fn default_branch() -> String {
+    "main".to_string()
 }
 
 
