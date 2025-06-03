@@ -18,7 +18,9 @@ use rancher_cac::utils::file::{
     get_minimal_object_from_contents, is_directory_empty, write_back_objects, FileFormat,
 };
 use rancher_cac::utils::git::{
-    clone_repository_if_required, commit_changes, get_deleted_files_and_contents, get_modified_files, get_new_uncommited_files, init_git_repo_with_main_branch, pull_changes, push_changes, resolve_conflicts, GitAuth
+    commit_changes, get_deleted_files_and_contents, get_modified_files, get_new_uncommited_files,
+    init_git_repo_with_main_branch, pull_changes, push_changes, push_repo_to_remote,
+    resolve_conflicts, safe_clone_repository, GitAuth, GitError,
 };
 
 use rancher_cac::modify::{compare_and_update_configurations, create_objects, delete_objects};
@@ -30,6 +32,7 @@ use tokio::time::interval;
 
 use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
+use walkdir::WalkDir;
 
 // const RETRY_DELAY: Duration = Duration::from_millis(200);
 // const LOOP_INTERVAL: Duration = Duration::from_secs(60);
@@ -54,7 +57,7 @@ async fn run_sync(
     loop_interval: u64,
     retry_delay: u64,
     branch: &str,
-    auth_method: GitAuth
+    auth_method: GitAuth,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Create a interval ticker
     let mut interval_timer = interval(Duration::from_secs(loop_interval));
@@ -67,9 +70,16 @@ async fn run_sync(
         Ok(true) => {
             info!("Downloading required");
 
-            let _ = download_current_configuration(&client_config, config_folder_path, &file_format,).await;
+            let _ = init_git_repo_with_main_branch(&config_folder_path, &remote_url, branch).map_err(
+                |e| {
+                    error!("Failed to initialize git repo: {}", e);
+                    e
+            });
+
+            let _ = download_current_configuration(&client_config, config_folder_path, &file_format)
+                    .await;
             // init git repo
-            init_git_repo_with_main_branch(&config_folder_path, &remote_url, branch)?;
+            
         }
         Ok(false) => {
             info!("Downloading not required");
@@ -78,7 +88,6 @@ async fn run_sync(
             error!("Failed to check if download is required: {}", e);
         }
     }
-
 
     loop {
         interval_timer.tick().await;
@@ -114,7 +123,7 @@ async fn run_sync(
         commit_changes(&config_folder_path, &message)?;
 
         // Push changes
-        match push_changes(&repo, branch) {
+        match push_changes(&repo, branch, &auth_method) {
             Ok(_) => info!("Successfully pushed changes"),
             Err(e) => error!("Failed to push changes: {}", e),
         }
@@ -172,24 +181,59 @@ async fn run_sync(
     }
 }
 
+pub async fn is_repo_effectively_empty(repo: &Repository) -> Result<bool, GitError> {
+    let workdir = repo.workdir().ok_or_else(|| {
+        GitError::Other("Repository has no working directory (bare repo?)".to_string())
+    })?;
 
-    /// Downloads the remote repository if the local folder is empty.
-    ///
-    /// The function takes the local folder path, the remote repository URL and the authentication method.
-    /// If the local folder is empty, it clones the remote repository into the local folder.
-    /// If the local folder is not empty, it does nothing.
-    /// If an error occurs during the cloning process, it returns `true`.
-    /// Otherwise, it returns `false`.
-async fn download_required(config_folder_path: &Path, remote_url: &str, auth_method: &GitAuth) -> Result<bool, Box<dyn std::error::Error>> {
+    let root = workdir.to_path_buf();
+
+    for entry in WalkDir::new(&root)
+        .into_iter()
+        .filter_entry(|e| e.file_name() != ".git")
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file())
+    {
+        let path: PathBuf = entry.path().to_path_buf();
+
+        // Check if file is ignored
+        let is_ignored = repo.status_should_ignore(&path).unwrap_or(false);
+        if !is_ignored {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
+}
+
+/// Downloads the remote repository if the local folder is empty.
+///
+/// The function takes the local folder path, the remote repository URL and the authentication method.
+/// If the local folder is empty, it clones the remote repository into the local folder.
+/// If the local folder is not empty, it does nothing.
+/// If an error occurs during the cloning process, it returns `true`.
+/// Otherwise, it returns `false`.
+async fn download_required(
+    config_folder_path: &Path,
+    remote_url: &str,
+    auth_method: &GitAuth,
+) -> Result<bool, Box<dyn std::error::Error>> {
     match is_directory_empty(config_folder_path).await {
         Ok(true) => {
             info!("Directory is empty: {}", config_folder_path.display());
             // Clone the remote repository into the empty directory
-            let cloned = clone_repository_if_required(config_folder_path, remote_url, auth_method).await;
-            // handle error 
+            let cloned = safe_clone_repository(config_folder_path, remote_url, auth_method).await;
+            // handle error
             match cloned {
                 Ok(repo) => {
                     info!("Repository cloned successfully: {}", repo.path().display());
+
+                    let repo = Repository::open(config_folder_path)?;
+                    if is_repo_effectively_empty(&repo).await? {
+                        info!("Repository is empty after cloning (ignoring .git and .gitignored files)");
+                        return Ok(true);
+                    }
+
                     Ok(false)
                 }
                 Err(e) => {
@@ -209,26 +253,6 @@ async fn download_required(config_folder_path: &Path, remote_url: &str, auth_met
             Ok(true)
         }
     }
-}
-
-
-use std::fs::write;
-use toml;
-
-pub fn export_shepherd_config_to_toml(config: &ShepherdConfig, file_path: Option<&Path>) -> Result<(), Box<dyn std::error::Error>> {
-    let toml_string = toml::to_string_pretty(config)?;
-    
-    match file_path {
-        Some(path) => {
-            write(path, toml_string)?;
-            println!("Config exported to file: {}", path.display());
-        },
-        None => {
-            println!("Config:\n{}", toml_string);
-        }
-    }
-
-    Ok(())
 }
 
 #[tokio::main]
@@ -268,7 +292,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // in milliseconds
     let retry_delay = app_config.retry_delay;
     let branch = app_config.branch;
-
     let auth_method = app_config.auth_method;
 
     run_sync(
@@ -280,10 +303,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         loop_interval,
         retry_delay,
         &branch,
-        auth_method
+        auth_method,
     )
     .await?;
 
     Ok(())
 }
-

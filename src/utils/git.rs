@@ -1,12 +1,14 @@
 use std::{
     error::Error,
-    path::{Path, PathBuf}, time::Duration,
+    path::{Path, PathBuf},
+    time::Duration,
 };
 
 use async_recursion::async_recursion;
-use git2::{Commit, Error as Git2Error, Index, IndexAddOption, Oid, ProxyOptions, PushOptions, RemoteCallbacks, Repository, Signature, Status, StatusOptions
+use git2::{
+    Commit, Error as Git2Error, ErrorCode, Index, IndexAddOption, Oid, ProxyOptions, PushOptions,
+    RemoteCallbacks, Repository, Signature, Status, StatusOptions,
 };
-
 
 use serde::{Deserialize, Serialize};
 use tokio::{fs::read_dir, time::sleep};
@@ -42,11 +44,13 @@ pub enum GitError {
     Other(String),
 }
 
-
 const MAX_RETRIES: u32 = 3;
 const RETRY_DELAY: Duration = Duration::from_secs(5);
 
-pub async fn init_and_commit_git_repo(folder_path: &Path, remote_url: &str) -> Result<(), GitError> {
+pub async fn init_and_commit_git_repo(
+    folder_path: &Path,
+    remote_url: &str,
+) -> Result<(), GitError> {
     let mut retries = 0;
     loop {
         match init_and_commit_git_repo_inner(folder_path, remote_url).await {
@@ -57,10 +61,13 @@ pub async fn init_and_commit_git_repo(folder_path: &Path, remote_url: &str) -> R
                 }
                 match e {
                     GitError::Network(_) => {
-                        warn!("Network error occurred, retrying in {} seconds", RETRY_DELAY.as_secs());
+                        warn!(
+                            "Network error occurred, retrying in {} seconds",
+                            RETRY_DELAY.as_secs()
+                        );
                         sleep(RETRY_DELAY).await;
                         retries += 1;
-                    },
+                    }
                     _ => return Err(e),
                 }
             }
@@ -68,19 +75,21 @@ pub async fn init_and_commit_git_repo(folder_path: &Path, remote_url: &str) -> R
     }
 }
 
-
-pub async fn clone_repository_if_required(
+pub async fn safe_clone_repository(
     config_folder_path: &Path,
     remote_url: &str,
     auth_method: &GitAuth,
 ) -> Result<Repository, GitError> {
-    if is_directory_empty(config_folder_path).await.map_err(|e| GitError::Other(format!("Failed to check if directory is empty: {}", e)))? {
+    if is_directory_empty(config_folder_path)
+        .await
+        .map_err(|e| GitError::Other(format!("Failed to check if directory is empty: {}", e)))?
+    {
         // Directory is empty, attempt to clone the repository
         info!("Cloning repository from {}", remote_url);
 
         let mut fetch_options = git2::FetchOptions::new();
 
-            // Set up remote callbacks
+        // Set up remote callbacks
         let mut remote_callbacks = git2::RemoteCallbacks::new();
         remote_callbacks
             .credentials(|_url, username_from_url, allowed_types| {
@@ -112,8 +121,6 @@ pub async fn clone_repository_if_required(
                         }
                     }
                     _ => Err(git2::Error::from_str("Unsupported authentication method")),
-                
-                
                 }
                 .map_err(|e| e.into())
             })
@@ -138,21 +145,23 @@ pub async fn clone_repository_if_required(
         // Use RepoBuilder to clone the repository
         let mut builder = git2::build::RepoBuilder::new();
         builder.fetch_options(fetch_options);
-        
+
         match builder.clone(remote_url, config_folder_path) {
             Ok(repo) => Ok(repo),
             Err(e) => {
                 // Check if the error is related to an empty repository
-                if e.message().contains("remote HEAD refers to nonexistent ref") || 
-                    e.message().contains("unable to checkout") {
+                if e.message()
+                    .contains("remote HEAD refers to nonexistent ref")
+                    || e.message().contains("unable to checkout")
+                {
                     info!("Remote repository appears to be empty. Initializing local repository instead.");
-                    
+
                     // Initialize a new repository locally
                     let repo = Repository::init(config_folder_path)?;
-                    
+
                     // Set up the remote
                     repo.remote("origin", remote_url)?;
-                    
+
                     Ok(repo)
                 } else {
                     // For other errors, propagate them
@@ -161,26 +170,39 @@ pub async fn clone_repository_if_required(
             }
         }
     } else {
-       // If the directory is not empty, try to open the repository
+        // If the directory is not empty, try to open the repository
         match Repository::open(config_folder_path) {
             Ok(repo) => Ok(repo),
-            Err(_) => Err(GitError::ExistingRepository(config_folder_path.display().to_string()))
+            Err(_) => Err(GitError::ExistingRepository(
+                config_folder_path.display().to_string(),
+            )),
         }
     }
 }
 
-async fn init_and_commit_git_repo_inner(folder_path: &Path, remote_url: &str) -> Result<(), GitError> {
+async fn init_and_commit_git_repo_inner(
+    folder_path: &Path,
+    remote_url: &str,
+) -> Result<(), GitError> {
     if !folder_path.exists() {
-        return Err(GitError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "Folder does not exist")));
+        return Err(GitError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "Folder does not exist",
+        )));
     }
     if !folder_path.is_dir() {
-        return Err(GitError::Io(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Path is not a directory")));
+        return Err(GitError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Path is not a directory",
+        )));
     }
     if folder_path.read_dir()?.next().is_none() {
         return Err(GitError::EmptyDirectory(folder_path.display().to_string()));
     }
     if Repository::discover(folder_path).is_ok() {
-        return Err(GitError::ExistingRepository(folder_path.display().to_string()));
+        return Err(GitError::ExistingRepository(
+            folder_path.display().to_string(),
+        ));
     }
 
     let repo = Repository::init(folder_path).map_err(GitError::Git)?;
@@ -188,7 +210,9 @@ async fn init_and_commit_git_repo_inner(folder_path: &Path, remote_url: &str) ->
     repo.remote("origin", remote_url).map_err(GitError::Git)?;
 
     let mut index = repo.index().map_err(GitError::Git)?;
-    index.add_all(["*"].iter(), IndexAddOption::DEFAULT, None).map_err(GitError::Git)?;
+    index
+        .add_all(["*"].iter(), IndexAddOption::DEFAULT, None)
+        .map_err(GitError::Git)?;
     index.write().map_err(GitError::Git)?;
 
     let tree_id = index.write_tree().map_err(GitError::Git)?;
@@ -198,14 +222,25 @@ async fn init_and_commit_git_repo_inner(folder_path: &Path, remote_url: &str) ->
     let message = "Initial commit";
     let parents = &[];
 
-    repo.commit(Some("HEAD"), &signature, &signature, message, &tree, parents).map_err(GitError::Git)?;
+    repo.commit(
+        Some("HEAD"),
+        &signature,
+        &signature,
+        message,
+        &tree,
+        parents,
+    )
+    .map_err(GitError::Git)?;
 
     // Push to remote
     let mut remote = repo.find_remote("origin").map_err(GitError::Git)?;
     let mut callbacks = RemoteCallbacks::new();
     callbacks.push_update_reference(|refname, status| {
         if let Some(msg) = status {
-            Err(Git2Error::from_str(&format!("Failed to update {}: {}", refname, msg)))
+            Err(Git2Error::from_str(&format!(
+                "Failed to update {}: {}",
+                refname, msg
+            )))
         } else {
             Ok(())
         }
@@ -214,7 +249,11 @@ async fn init_and_commit_git_repo_inner(folder_path: &Path, remote_url: &str) ->
     let mut push_options = PushOptions::new();
     push_options.remote_callbacks(callbacks);
 
-    remote.push(&["refs/heads/main:refs/heads/main"], Some(&mut push_options))
+    remote
+        .push(
+            &["refs/heads/main:refs/heads/main"],
+            Some(&mut push_options),
+        )
         .map_err(|e| GitError::Network(format!("Failed to push: {}", e)))?;
 
     Ok(())
@@ -296,52 +335,80 @@ pub async fn get_modified_files(folder_path: &Path) -> Result<Vec<PathBuf>, Box<
 /// # Returns
 /// * `Result<(), String>` - Result indicating success or failure
 ///
-pub fn init_git_repo_with_main_branch(folder_path: &Path, remote_url: &str, branch_name: &str) -> Result<(), GitError> {
+pub fn init_git_repo_with_main_branch(
+    folder_path: &Path,
+    remote_url: &str,
+    branch_name: &str,
+) -> Result<(), GitError> {
     if !folder_path.exists() {
-        return Err(GitError::Other(format!("Folder does not exist: {}", folder_path.display())));
+        return Err(GitError::Other(format!(
+            "Folder does not exist: {}",
+            folder_path.display()
+        )));
     }
     if !folder_path.is_dir() {
-        return Err(GitError::Other(format!("Path is not a directory: {}", folder_path.display())));
-    }
-    if Repository::discover(folder_path).is_ok() {
-        return Err(GitError::Other(format!("Folder is already a git repository: {}", folder_path.display())));
+        return Err(GitError::Other(format!(
+            "Path is not a directory: {}",
+            folder_path.display()
+        )));
     }
 
-    debug!("Initializing repository in folder: {}", folder_path.display());
+    debug!(
+        "Initializing repository in folder: {}",
+        folder_path.display()
+    );
     let repo = Repository::init(folder_path).map_err(GitError::Git)?;
 
     debug!("Creating an initial commit in repository");
     let sig = Signature::now(crate::FULL_CLIENT_ID, "shepherd@test.com").map_err(GitError::Git)?;
     let tree_id = {
         let mut index = repo.index().map_err(GitError::Git)?;
-        index.add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
-             .map_err(GitError::Git)?;
+        index
+            .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+            .map_err(GitError::Git)?;
         index.write_tree().map_err(GitError::Git)?
     };
     let tree = repo.find_tree(tree_id).map_err(GitError::Git)?;
     repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])
         .map_err(GitError::Git)?;
 
-    debug!("Setting up remote: {}", remote_url);
-    repo.remote("origin", remote_url).map_err(GitError::Git)?;
+    if repo.find_remote("origin").is_ok() {
+        debug!("Remote 'origin' already exists — updating URL if necessary");
+
+        let current_url = repo
+            .find_remote("origin")?
+            .url()
+            .unwrap_or("<none>")
+            .to_string();
+
+        if current_url != remote_url {
+            debug!(
+                "Updating remote 'origin' URL from {} to {}",
+                current_url, remote_url
+            );
+            repo.remote_set_url("origin", remote_url)?;
+        }
+    } else {
+        debug!("Creating new remote 'origin' -> {}", remote_url);
+        repo.remote("origin", remote_url)?;
+    }
 
     debug!("Creating and checking out branch: {}", branch_name);
-    let mut branch = repo.branch(branch_name, &repo.head()?.peel_to_commit()?, false)
-                     .map_err(GitError::Git)?;
+    let mut branch = repo
+        .branch(branch_name, &repo.head()?.peel_to_commit()?, false)
+        .map_err(GitError::Git)?;
     repo.set_head(branch.get().name().unwrap_or("refs/heads/master"))
         .map_err(GitError::Git)?;
     repo.checkout_head(Some(git2::build::CheckoutBuilder::new().safe()))
         .map_err(GitError::Git)?;
 
     // Set up branch to track remote
-    branch.set_upstream(Some("origin/main")).map_err(GitError::Git)?;
+    branch
+        .set_upstream(Some("origin/main"))
+        .map_err(GitError::Git)?;
 
     Ok(())
 }
-
-
-
-
 
 pub fn resolve_conflicts(repo: &Repository, branch: &str) -> Result<(), GitError> {
     let mut index = repo.index()?;
@@ -373,9 +440,10 @@ fn resolve_index_conflicts(index: &mut Index) -> Result<(), GitError> {
             index.add(&entry)?;
 
             // Resolve the path to remove the conflict
-            let path = Path::new(std::str::from_utf8(&entry.path).map_err(|e| {
-                GitError::Other(format!("Invalid UTF-8 in path: {}", e))
-            })?);
+            let path = Path::new(
+                std::str::from_utf8(&entry.path)
+                    .map_err(|e| GitError::Other(format!("Invalid UTF-8 in path: {}", e)))?,
+            );
             index.remove_path(path)?;
         } else {
             // No "theirs" or "ours" — fall back to ancestor or skip
@@ -391,38 +459,37 @@ fn resolve_index_conflicts(index: &mut Index) -> Result<(), GitError> {
     Ok(())
 }
 
-
-
-fn create_merge_commit(repo: &Repository, index: &mut Index, branch: &str) -> Result<Oid, GitError> {
+fn create_merge_commit(
+    repo: &Repository,
+    index: &mut Index,
+    branch: &str,
+) -> Result<Oid, GitError> {
     let tree_id = index.write_tree()?;
     let tree = repo.find_tree(tree_id)?;
-    
+
     let signature = repo.signature()?;
     let parent_commit = repo.head()?.peel_to_commit()?;
     let message = "Merge and resolve conflicts";
-    
+
     // Get the FETCH_HEAD as the second parent
     let fetch_head = repo.find_reference("FETCH_HEAD")?;
     let fetch_commit = fetch_head.peel_to_commit()?;
-    
+
     let commit_id = repo.commit(
         Some("HEAD"),
         &signature,
         &signature,
         message,
         &tree,
-        &[&parent_commit, &fetch_commit]
+        &[&parent_commit, &fetch_commit],
     )?;
-    
+
     // Update the branch reference
     let refname = format!("refs/heads/{}", branch);
     repo.reference(&refname, commit_id, true, "merge: Fast-forward")?;
-    
+
     Ok(commit_id)
 }
-
-
-
 
 /// push repo to remote
 /// # Arguments
@@ -448,12 +515,6 @@ pub fn push_repo_to_remote(
     if !folder_path.is_dir() {
         return Err(format!(
             "Path is not a directory: {}",
-            folder_path.display()
-        ));
-    }
-    if Repository::discover(folder_path).is_ok() {
-        return Err(format!(
-            "Folder is already a git repository: {}",
             folder_path.display()
         ));
     }
@@ -488,6 +549,8 @@ pub fn push_repo_to_remote(
                 }
                 GitAuth::SshAgent => {
                     if allowed_types.contains(git2::CredentialType::SSH_KEY) {
+                        debug!("Using SSH agent authentication");
+                        debug!("Auth method: {:#?}", auth_method);
                         git2::Cred::ssh_key_from_agent(username_from_url.unwrap_or("git"))
                     } else {
                         Err(git2::Error::from_str(
@@ -549,57 +612,42 @@ pub fn push_repo_to_remote(
     Ok(())
 }
 
-
-
-
-pub fn pull_changes(repo: &Repository, branch: &str, auth_method: &GitAuth) -> Result<(), GitError> {
+pub fn pull_changes(
+    repo: &Repository,
+    branch: &str,
+    auth_method: &GitAuth,
+) -> Result<(), GitError> {
     // Setup ProxyOptions
     let mut proxy_options = ProxyOptions::new();
     proxy_options.auto();
 
     let mut callbacks = RemoteCallbacks::new();
     callbacks.credentials(|url, username_from_url, allowed_types| {
-        match &auth_method {
-            GitAuth::SshKey(key_path) => {
-                if allowed_types.contains(git2::CredentialType::SSH_KEY) {
-                    let username = username_from_url.unwrap_or("git");
-                    debug!("SSH Key using Username: {}", username);
-                    git2::Cred::ssh_key(username, None, key_path, None)
-                } else {
-                    Err(git2::Error::from_str("SSH key authentication not allowed"))
-                }
-            }
-            GitAuth::HttpsToken(token) => {
-                if allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
-                    git2::Cred::userpass_plaintext(username_from_url.unwrap_or(""), token)
-                } else {
-                    Err(git2::Error::from_str(
-                        "HTTPS token authentication not allowed",
-                    ))
-                }
-            }
-            GitAuth::SshAgent => {
-                if allowed_types.contains(git2::CredentialType::SSH_KEY) {
-                    git2::Cred::ssh_key_from_agent(username_from_url.unwrap_or("git"))
-                } else {
-                    Err(git2::Error::from_str(
-                        "SSH agent authentication not allowed",
-                    ))
-                }
-            }
-            _ => Err(git2::Error::from_str("Unsupported authentication method")),
-        }
-        .map_err(|e| e.into())
+        match_credentials(url, username_from_url, allowed_types, auth_method).map_err(|e| e.into())
     });
-    
+
     let mut remote = repo.find_remote("origin")?;
     remote.connect_auth(git2::Direction::Fetch, Some(callbacks), Some(proxy_options))?;
-    remote.fetch(&[branch], None, None)?;
-    
+
+    let mut fetch_options = git2::FetchOptions::new();
+
+    let mut callbacks = RemoteCallbacks::new();
+    callbacks.credentials(|url, username_from_url, allowed_types| {
+        match_credentials(url, username_from_url, allowed_types, auth_method).map_err(|e| e.into())
+    });
+
+    let mut proxy_options = ProxyOptions::new();
+    proxy_options.auto();
+
+    fetch_options.remote_callbacks(callbacks);
+    fetch_options.proxy_options(proxy_options);
+
+    remote.fetch(&[branch], Some(&mut fetch_options), None)?;
+
     let fetch_head = repo.find_reference("FETCH_HEAD")?;
     let fetch_commit = repo.reference_to_annotated_commit(&fetch_head)?;
     let analysis = repo.merge_analysis(&[&fetch_commit])?;
-    
+
     if analysis.0.is_up_to_date() {
         Ok(())
     } else if analysis.0.is_fast_forward() {
@@ -614,14 +662,66 @@ pub fn pull_changes(repo: &Repository, branch: &str, auth_method: &GitAuth) -> R
     }
 }
 
-pub fn push_changes(repo: &Repository, branch: &str) -> Result<(), GitError> {
-    let mut remote = repo.find_remote("origin")?;
-    let refspec = format!("refs/heads/{}:refs/heads/{}", branch, branch);
-    remote.push(&[&refspec], None)?;
-    Ok(())
+fn match_credentials(
+    url: &str,
+    username_from_url: Option<&str>,
+    allowed_types: git2::CredentialType,
+    auth_method: &GitAuth,
+) -> Result<git2::Cred, git2::Error> {
+    match &auth_method {
+        GitAuth::SshKey(key_path) => {
+            if allowed_types.contains(git2::CredentialType::SSH_KEY) {
+                let username = username_from_url.unwrap_or("git");
+                debug!("SSH Key using Username: {}", username);
+                git2::Cred::ssh_key(username, None, key_path, None)
+            } else {
+                Err(git2::Error::from_str("SSH key authentication not allowed"))
+            }
+        }
+        GitAuth::HttpsToken(token) => {
+            if allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
+                git2::Cred::userpass_plaintext(username_from_url.unwrap_or(""), token)
+            } else {
+                Err(git2::Error::from_str(
+                    "HTTPS token authentication not allowed",
+                ))
+            }
+        }
+        GitAuth::SshAgent => {
+            if allowed_types.contains(git2::CredentialType::SSH_KEY) {
+                git2::Cred::ssh_key_from_agent(username_from_url.unwrap_or("git"))
+            } else {
+                Err(git2::Error::from_str(
+                    "SSH agent authentication not allowed",
+                ))
+            }
+        }
+        _ => Err(git2::Error::from_str("Unsupported authentication method")),
+    }
 }
 
+pub fn push_changes(
+    repo: &Repository,
+    branch: &str,
+    auth_method: &GitAuth,
+) -> Result<(), GitError> {
+    let mut remote_callbacks = RemoteCallbacks::new();
+    remote_callbacks.credentials(|url, username_from_url, allowed_types| {
+        match_credentials(url, username_from_url, allowed_types, auth_method).map_err(|e| e.into())
+    });
 
+    let mut proxy_options = ProxyOptions::new();
+    proxy_options.auto();
+
+    let mut push_options = PushOptions::new();
+    push_options.remote_callbacks(remote_callbacks);
+    push_options.proxy_options(proxy_options);
+
+    let mut remote = repo.find_remote("origin")?;
+    let refspec = format!("refs/heads/{}:refs/heads/{}", branch, branch);
+    remote.push(&[&refspec], Some(&mut push_options))?;
+    Ok(())
+}
 
 /// Commits changes in a given folder path with the specified commit message.
 /// # Arguments

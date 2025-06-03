@@ -5,6 +5,7 @@ use std::{collections::HashMap, fmt::Display, path::PathBuf};
 use rancher_client::models::{IoCattleManagementv3Cluster, IoCattleManagementv3Project, IoCattleManagementv3ProjectRoleTemplateBinding, IoCattleManagementv3RoleTemplate};
 use serde::{Deserialize, Serialize};
 use anyhow::{Result, Context};
+use tracing::info;
 
 use crate::utils::git::GitAuth;
 use crate::{cluster::Cluster, utils::file::FileFormat, resources::project::Project, resources::prtb::ProjectRoleTemplateBinding, resources::rt::RoleTemplate};
@@ -129,11 +130,24 @@ impl ShepherdConfig {
 
         // Handle Git authentication method
         config.auth_method = match (env::var("GIT_AUTH_METHOD"), env::var("GIT_SSH_KEY"), env::var("GIT_TOKEN")) {
-            (Ok(method), Ok(key), _) if method == "ssh_key" => GitAuth::SshKey(PathBuf::from(key)),
-            (Ok(method), _, Ok(token)) if method == "https_token" => GitAuth::HttpsToken(token),
-            (Ok(method), _, _) if method == "ssh_agent" => GitAuth::SshAgent,
-            (Ok(method), _, _) if method == "git_credential_helper" => GitAuth::GitCredentialHelper,
-            _ => GitAuth::SshAgent, // default
+            (Ok(method), Ok(key), _) if method == "ssh_key" =>  {
+                info!("Using SSH key: {}", key);
+                GitAuth::SshKey(PathBuf::from(key))},
+            (Ok(method), _, Ok(token)) if method == "https_token" => {
+                info!("Using HTTPS token: {}", token);
+                GitAuth::HttpsToken(token)
+            },
+            (Ok(method), _, _) if method == "ssh_agent" => {
+                info!("Using SSH agent");
+                GitAuth::SshAgent},
+            (Ok(method), _, _) if method == "git_credential_helper" =>{
+                info!("Using git credential helper");
+                GitAuth::GitCredentialHelper
+            },
+            _ => {
+                info!("Using default authentication method: {:#?}", config.auth_method);
+                config.auth_method
+             } // default
         };
         Ok(config)
     }
@@ -185,6 +199,7 @@ impl Display for ShepherdConfig {
         )?;
         writeln!(f, "Loop interval: {} seconds", self.loop_interval)?;
         writeln!(f, "Retry delay: {} milliseconds", self.retry_delay)?;
+        writeln!(f, "Auth method: {:#?}", self.auth_method)?;
         Ok(())
     }
 }
