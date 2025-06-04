@@ -9,7 +9,6 @@ Configuration as Code software for managing Rancher projects, roletemplates, and
 
 - Declarative configuration for Rancher projects, roletemplates, and projectroletemplatebindings
 - Support for GitOps workflows
-- Validation and dry-run modes
 - Integration with RK-API
 
 ## Project Goals
@@ -22,6 +21,7 @@ Configuration as Code software for managing Rancher projects, roletemplates, and
 
 - **Language:** Rust 🦀
 - **API:** Rancher v2.10
+- **Main dependencies:** [rancher_client](https://crates.io/crates/rancher_client), tokio, serde, tracing, anyhow, reqwest, json-patch
 - **Configuration Format:** Y(A)ML/JSON/TOML
 
 ## Getting Started
@@ -32,6 +32,47 @@ Configuration as Code software for managing Rancher projects, roletemplates, and
 
 - Rust (1.83 or higher recommended)
 - Access to a Rancher environment with API token
+
+### Usage
+
+To output logs make sure to set the environment variable `RUST_LOG=none,shepherd=LOG_LEVEL` where `LOG_LEVEL` is of (`DEBUG`|`TRACE`|`INFO`)
+
+Set the config for shepherd at `~/.shepherd/config.toml`
+
+Example:
+
+```toml
+rancher_config_path = "/Users/samuel/Documents/Kubernetes/rancher_config"
+endpoint_url = "https://rancher.rd.localhost"
+file_format = "json"
+token = "token-kdlz3:random312random312random312r"
+remote_git_url = "git@github.com:samuel/remote_config_store.git"
+cluster_names = ["cluster1", "cluster2"]
+# in seconds
+loop_interval = 60
+# in milliseconds
+retry_delay = 500
+branch = "main"
+
+[auth_method]
+SshKey = "/Users/samuel/.ssh/shepherd"
+```
+
+### From source
+
+```bash
+git clone https://github.com/DeusSeos/Shepherd.git
+cd Shepherd
+cargo build --release
+```
+
+Run the binary with `./target/release/shepherd`.
+
+### From releases
+
+Download the binary from [here](https://github.com/DeusSeos/Shepherd/releases)
+
+Run the binary with `./shepherd`
 
 ### Development
 
