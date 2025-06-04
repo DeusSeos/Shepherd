@@ -1,5 +1,5 @@
 [package]
-name = "rancher-cac"
+name = "shepherd"
 version = "0.1.0"
 edition = "2021"
 authors = ["DeusSeos"]
@@ -27,3 +27,4 @@ tokio = { version = "1.45.0", features = ["full"] }
 toml = "0.8.21"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+walkdir = "2.5.0"
