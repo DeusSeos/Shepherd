@@ -28,8 +28,6 @@ Configuration as Code software for managing Rancher projects, roletemplates, and
 
 > **Note:** Project is in early development. Expect rapid iteration and breaking changes.
 
-
-
 ### Prerequisites
 
 - Rust (1.83 or higher recommended)

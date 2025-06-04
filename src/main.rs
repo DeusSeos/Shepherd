@@ -2,19 +2,19 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use rancher_cac::api::client::ShepherdClient;
-use rancher_cac::api::config::ShepherdConfig;
-use rancher_cac::error::{handle_result_collection, AppError};
-use rancher_cac::models::{MinimalObject, ObjectType};
-use rancher_cac::utils::file::{
+use shepherd::api::client::ShepherdClient;
+use shepherd::api::config::ShepherdConfig;
+use shepherd::error::{handle_result_collection, AppError};
+use shepherd::models::{MinimalObject, ObjectType};
+use shepherd::utils::file::{
     get_minimal_object_from_contents, is_directory_empty, write_back_objects, FileFormat,
 };
-use rancher_cac::utils::git::{
+use shepherd::utils::git::{
     commit_changes, get_deleted_files_and_contents, get_modified_files, get_new_uncommited_files,
     init_git_repo_with_main_branch, pull_changes, push_changes, resolve_conflicts, safe_clone_repository, GitAuth, GitError,
 };
-use rancher_cac::modify::{compare_and_update_configurations, create_objects, delete_objects};
-use rancher_cac::download_current_configuration;
+use shepherd::modify::{compare_and_update_configurations, create_objects, delete_objects};
+use shepherd::download_current_configuration;
 use rancher_client::apis::configuration::Configuration;
 
 

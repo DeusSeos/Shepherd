@@ -1,5 +1,5 @@
 [package]
-name = "rancher-cac"
+name = "shepherd"
 version = "0.1.0"
 edition = "2021"
 authors = ["DeusSeos"]
