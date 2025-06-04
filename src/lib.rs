@@ -62,36 +62,21 @@ include!(concat!(env!("OUT_DIR"), "/client_info.rs"));
 
 
 
-// Local usage only, for testing purposes
-// This function will be used to fetch the current configuration from the Rancher API
-// it will do the following:
-// 1. Get the current configuration from the Rancher API for clusters, projects, role templates and project role template bindings
-// 2. Loop through the clusters and save them to a folder
-// 3. Loop through the projects and save them to the correct cluster folder
-// 4. Loop through the role templates and save them to the correct cluster folder
-// 5. Loop through the project role template bindings and save them to the correct project folder
 
-//
-// the example folder structure will be as follows:
-
-// /c-293x
-// ├─ c-293x.(yaml/json/toml)
-// ├─ /p-2a4i21
-// │　├─ p-2a4i21.(yaml/json/toml)
-// │　└─ prtb-29291.(yaml/json/toml)
-// ├─ /p-8a2h12
-// │　├─ p-8a2h12.(yaml/json/toml)
-// │　└─ prtb-9nn91.(yaml/json/toml)
-// └─ roles
-// 　　├─ rt-92813.(yaml/json/toml)
-// 　　└─ rt-92818.(yaml/json/toml)
-
-// the file names will be the ID of the object
-// the file extension will be the format of the file
-// the folder names will be the ID of the object
-// the folder will be created if it does not exist
-// the function will return the path to the folderm
-
+/// Downloads the current configuration from the Rancher API and stores it in a file.
+///
+/// This will create a folder structure mirroring the Rancher API, with clusters as subfolders
+/// containing projects and project role template bindings as subfolders, and role templates as
+/// files in a 'roles' folder. Each object is serialized as a file in the specified format.
+///
+/// # Errors
+///
+/// This function will return an error if any of the following occurs:
+///
+/// * The configuration is invalid
+/// * The folder structure cannot be created
+/// * The objects cannot be converted to the specified format
+/// * The objects cannot be written to the file system
 #[async_backtrace::framed]
 pub async fn download_current_configuration(
     configuration: &Configuration,
@@ -228,6 +213,14 @@ pub async fn download_current_configuration(
     Ok(())
 }
 
+    /// Loads the current configuration of the specified cluster from the Rancher API.
+    ///
+    /// # Arguments
+    /// * `configuration`: The configuration object to use for connecting to Rancher
+    /// * `cluster_id`: The ID of the cluster to load the configuration for
+    ///
+    /// # Returns
+    /// `RancherClusterConfig`: The loaded configuration
 #[async_backtrace::framed]
 pub async fn load_configuration_from_rancher(
     configuration: &Configuration,
@@ -310,6 +303,28 @@ pub async fn load_configuration_from_rancher(
     Ok(rancher_cluster_config)
 }
 
+    /// Loads a cluster configuration from a file.
+    ///
+    /// The function reads a cluster configuration from a file at the given path.
+    /// The file must be a valid cluster configuration file in one of the supported file formats.
+    ///
+    /// The function returns a `ClusterConfig` object if the file could be read successfully and
+    /// the file format is supported, or an error if the file does not exist, the file format is not supported,
+    /// or any other error occurs during the file read operation.
+    ///
+    /// The function does not validate the cluster configuration. If the configuration is invalid,
+    /// the function will return an error.
+    ///
+    /// # Arguments
+    ///
+    /// * `path`: The path to the file containing the cluster configuration
+    /// * `endpoint_url`: The URL of the Rancher server
+    /// * `cluster_id`: The ID of the cluster to load the configuration for
+    /// * `file_format`: The file format of the configuration file
+    ///
+    /// # Examples
+    ///
+    /// 
 pub async fn load_configuration(
     path: &Path,
     endpoint_url: &str,

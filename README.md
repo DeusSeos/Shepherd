@@ -1,4 +1,4 @@
-# Sheperd
+# Shepherd
 
 Configuration as Code software for managing Rancher projects, roletemplates, and projectroletemplatebindings in a GitOps workflow written in Rust. This project aims to simplify and standardize Rancher configuration management across environments, promoting automation, reproducibility, and version control.
 
@@ -28,16 +28,18 @@ Configuration as Code software for managing Rancher projects, roletemplates, and
 
 > **Note:** Project is in early development. Expect rapid iteration and breaking changes.
 
+
+
 ### Prerequisites
 
 - Rust (1.83 or higher recommended)
 - Access to a Rancher environment with API token
 
-### Build
+### Development
 
-```bash
-cargo build --release
-```
+#### Dependencies
+
+After cloning the repository run `cargo build` to download the dependencies for Shepherd.
 
 ### Authors
 

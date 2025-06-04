@@ -6,7 +6,7 @@ use std::{
 
 use async_recursion::async_recursion;
 use git2::{
-    Commit, Error as Git2Error, ErrorCode, Index, IndexAddOption, Oid, ProxyOptions, PushOptions,
+    Commit, Error as Git2Error, Index, IndexAddOption, Oid, ProxyOptions, PushOptions,
     RemoteCallbacks, Repository, Signature, Status, StatusOptions,
 };
 
@@ -47,6 +47,8 @@ pub enum GitError {
 const MAX_RETRIES: u32 = 3;
 const RETRY_DELAY: Duration = Duration::from_secs(5);
 
+/// Initializes a new git repository in the given folder and commits all changes, retrying up to
+/// MAX_RETRIES times if a network error occurs.
 pub async fn init_and_commit_git_repo(
     folder_path: &Path,
     remote_url: &str,
@@ -75,6 +77,14 @@ pub async fn init_and_commit_git_repo(
     }
 }
 
+    /// Safely clones a repository from the given remote URL to the given local folder.
+    ///
+    /// If the local folder is empty, it will attempt to clone the repository. If the repository is
+    /// empty, it will initialize a new repository instead. If the local folder is not empty, it
+    /// will try to open the existing repository.
+    ///
+    /// The function will return an error if the local folder already contains a repository, or if
+    /// there is an error cloning or opening the repository.
 pub async fn safe_clone_repository(
     config_folder_path: &Path,
     remote_url: &str,
@@ -180,6 +190,19 @@ pub async fn safe_clone_repository(
     }
 }
 
+    /// Initializes a new git repository in the given folder, commits all files in the folder,
+    /// and pushes the changes to the given remote URL.
+    ///
+    /// If the folder does not exist, or if the folder is empty, an error is returned.
+    /// If the folder is not a directory, an error is returned.
+    /// If the folder already contains a repository, an error is returned.
+    ///
+    /// The function will also return an error if there is a problem initializing the
+    /// repository, committing the files, or pushing the changes.
+    ///
+    /// # Arguments
+    /// * `folder_path` - Path to the folder to initialize the repository in
+    /// * `remote_url` - URL of the remote repository to push to
 async fn init_and_commit_git_repo_inner(
     folder_path: &Path,
     remote_url: &str,
@@ -410,12 +433,15 @@ pub fn init_git_repo_with_main_branch(
     Ok(())
 }
 
+/// Resolve any merge conflicts in the index by taking the remote branch's
+/// version of each file. If conflicts are detected, a merge commit is created
+/// after resolving the conflicts.
 pub fn resolve_conflicts(repo: &Repository, branch: &str) -> Result<(), GitError> {
     let mut index = repo.index()?;
     if index.has_conflicts() {
         warn!("Merge conflicts detected. Attempting to resolve...");
 
-        // Resolve conflicts by taking 'ours'
+        // Resolve conflicts by taking 'theirs'
         resolve_index_conflicts(&mut index)?;
 
         // Write the updated index to disk
@@ -429,6 +455,15 @@ pub fn resolve_conflicts(repo: &Repository, branch: &str) -> Result<(), GitError
     Ok(())
 }
 
+    /// Resolve all merge conflicts in the index by favoring the "theirs"
+    /// version of each file. If there is no "theirs" version, fall back to
+    /// "ours". If there is no "theirs" or "ours", fall back to the ancestor
+    /// version or skip the file altogether.
+    ///
+    /// This function modifies the index in place and will write it back to
+    /// disk. It will also remove any conflict markers from the working
+    /// directory, so make sure to call `index.write()` after calling this
+    /// function.
 fn resolve_index_conflicts(index: &mut Index) -> Result<(), GitError> {
     // Collect all conflicts to avoid borrowing the index during iteration
     let conflicts = index.conflicts()?.collect::<Result<Vec<_>, _>>()?;
@@ -459,6 +494,17 @@ fn resolve_index_conflicts(index: &mut Index) -> Result<(), GitError> {
     Ok(())
 }
 
+    /// Creates a merge commit that resolves conflicts in the index.
+    ///
+    /// This function writes the index to disk, resolves all conflicts by favoring
+    /// the "theirs" version of each file (and falling back to "ours" and then
+    /// "ancestor" if necessary), creates a merge commit with the resolved index,
+    /// and updates the branch reference to point to the new commit.
+    ///
+    /// # Errors
+    ///
+    /// If there is an error writing the index to disk, creating the merge
+    /// commit, or updating the branch reference, an error is returned.
 fn create_merge_commit(
     repo: &Repository,
     index: &mut Index,
@@ -612,6 +658,21 @@ pub fn push_repo_to_remote(
     Ok(())
 }
 
+    /// Pulls the latest changes from the remote repository.
+    ///
+    /// # Arguments
+    ///
+    /// * `repo` - The git repository to pull changes into
+    /// * `branch` - The branch to pull changes from
+    /// * `auth_method` - The authentication method to use when pulling from the remote
+    ///
+    /// # Return
+    ///
+    /// Returns `Ok(())` if the pull is successful, or an error if there is a problem.
+    ///
+    /// # Errors
+    ///
+    /// Returns `GitError::Other` if there is a problem with the merge analysis.
 pub fn pull_changes(
     repo: &Repository,
     branch: &str,
@@ -662,8 +723,16 @@ pub fn pull_changes(
     }
 }
 
+/// Match the given authentication method against the allowed types and return the appropriate credential.
+///
+/// * If the authentication method is SSH key, return a SSH key credential if SSH key is allowed.
+/// * If the authentication method is HTTPS token, return a userpass_plaintext credential if userpass_plaintext is allowed.
+/// * If the authentication method is SSH agent, return a SSH key from agent credential if SSH key is allowed.
+/// * Otherwise, return an error.
+///
+/// The username used for the credential is taken from the URL, or if not present, defaults to "git".
 fn match_credentials(
-    url: &str,
+    _url: &str,
     username_from_url: Option<&str>,
     allowed_types: git2::CredentialType,
     auth_method: &GitAuth,

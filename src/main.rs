@@ -1,35 +1,26 @@
-#![allow(unused_variables)]
-// #![allow(unused_imports)]
-
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
-
-use git2::Repository;
 use rancher_cac::api::client::ShepherdClient;
-use rancher_cac::api::config::{self, ShepherdConfig};
-
+use rancher_cac::api::config::ShepherdConfig;
 use rancher_cac::error::{handle_result_collection, AppError};
-
 use rancher_cac::models::{MinimalObject, ObjectType};
 use rancher_cac::utils::file::{
     get_minimal_object_from_contents, is_directory_empty, write_back_objects, FileFormat,
 };
 use rancher_cac::utils::git::{
     commit_changes, get_deleted_files_and_contents, get_modified_files, get_new_uncommited_files,
-    init_git_repo_with_main_branch, pull_changes, push_changes, push_repo_to_remote,
-    resolve_conflicts, safe_clone_repository, GitAuth, GitError,
+    init_git_repo_with_main_branch, pull_changes, push_changes, resolve_conflicts, safe_clone_repository, GitAuth, GitError,
 };
-
 use rancher_cac::modify::{compare_and_update_configurations, create_objects, delete_objects};
-
 use rancher_cac::download_current_configuration;
-
 use rancher_client::apis::configuration::Configuration;
-use tokio::time::interval;
 
+
+use anyhow::Result;
+use git2::Repository;
+use tokio::time::interval;
 use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
 use walkdir::WalkDir;
@@ -47,7 +38,35 @@ fn init_tracing() {
         .init();
 }
 
-// /*
+
+/// Runs the main loop of the configuration synchronization process.
+///
+/// This function will download the current configuration from the Rancher API if
+/// the local folder is empty. It will then initialize a git repository and
+/// download the current configuration.
+///
+/// After that, it will enter a loop where it will:
+///
+/// 1. Pull changes from the remote repository
+/// 2. Commit local changes
+/// 3. Push changes to the remote repository
+/// 4. Update the objects in the Rancher API if the local files have changed
+/// 5. Create new objects in the Rancher API if new files have been added
+/// 6. Delete objects in the Rancher API if files have been deleted
+///
+/// The function will run indefinitely until it is stopped.
+///
+/// It takes the following parameters:
+///
+/// - `client_config`: The configuration for the Rancher API client
+/// - `config_folder_path`: The path to the folder where the configuration files are stored
+/// - `remote_url`: The URL of the remote git repository
+/// - `file_format`: The file format of the configuration files
+/// - `cluster_ids`: A vector of cluster IDs to synchronize the configuration for
+/// - `loop_interval`: The interval in seconds to wait between each run
+/// - `retry_delay`: The delay in milliseconds to wait before retrying an operation
+/// - `branch`: The branch to use in the remote repository
+/// - `auth_method`: The authentication method to use for the remote repository
 async fn run_sync(
     client_config: Arc<Configuration>,
     config_folder_path: &Path,
@@ -70,16 +89,16 @@ async fn run_sync(
         Ok(true) => {
             info!("Downloading required");
 
-            let _ = init_git_repo_with_main_branch(&config_folder_path, &remote_url, branch).map_err(
-                |e| {
+            let _ = init_git_repo_with_main_branch(&config_folder_path, &remote_url, branch)
+                .map_err(|e| {
                     error!("Failed to initialize git repo: {}", e);
                     e
-            });
+                });
 
-            let _ = download_current_configuration(&client_config, config_folder_path, &file_format)
+            let _ =
+                download_current_configuration(&client_config, config_folder_path, &file_format)
                     .await;
             // init git repo
-            
         }
         Ok(false) => {
             info!("Downloading not required");
@@ -100,7 +119,10 @@ async fn run_sync(
             Err(_) => {
                 info!("Repository not found, initializing...");
                 init_git_repo_with_main_branch(&config_folder_path, &remote_url, branch)?;
-                Repository::open(&config_folder_path)?
+                Repository::open(&config_folder_path).map_err(|e| {
+                    error!("Failed to open repository: {}", e);
+                    e
+                })?
             }
         };
 
@@ -128,55 +150,57 @@ async fn run_sync(
             Err(e) => error!("Failed to push changes: {}", e),
         }
 
-        let cluster_id = cluster_ids[0].clone();
+        // let cluster_id = cluster_ids[0].clone();
 
-        let new_files = get_new_uncommited_files(&config_folder_path).await?;
+        for cluster_id in cluster_ids.iter() {
+            let new_files = get_new_uncommited_files(&config_folder_path).await?;
 
-        let modified_files = get_modified_files(&config_folder_path).await?;
+            let modified_files = get_modified_files(&config_folder_path).await?;
 
-        let deleted_files_and_contents =
-            get_deleted_files_and_contents(&config_folder_path).await?;
+            let deleted_files_and_contents =
+                get_deleted_files_and_contents(&config_folder_path).await?;
 
-        info!("New files: {:?}", new_files);
+            info!("New files: {:?}", new_files);
 
-        info!("Modified files: {:?}", modified_files);
+            info!("Modified files: {:?}", modified_files);
 
-        info!(
-            "Deleted files: {:?}",
-            deleted_files_and_contents
-                .iter()
-                .map(|(object_type, path, _)| (object_type, path))
-                .collect::<Vec<_>>()
-        );
+            info!(
+                "Deleted files: {:?}",
+                deleted_files_and_contents
+                    .iter()
+                    .map(|(object_type, path, _)| (object_type, path))
+                    .collect::<Vec<_>>()
+            );
 
-        let update_objects = compare_and_update_configurations(
-            client_config.clone(),
-            &config_folder_path,
-            &cluster_id,
-            &file_format,
-        )
-        .await;
-        let created_objects =
-            create_objects(client_config.clone(), new_files, 10, 5, retry_delay).await;
+            let _update_objects = compare_and_update_configurations(
+                client_config.clone(),
+                &config_folder_path,
+                &cluster_id,
+                &file_format,
+            )
+            .await;
+            let created_objects =
+                create_objects(client_config.clone(), new_files, 10, 5, retry_delay).await;
 
-        let (successes, mut errors) = handle_result_collection(created_objects);
+            let (successes, mut errors) = handle_result_collection(created_objects);
 
-        // Write back the successfully created objects
-        write_back_objects(successes, file_format).await?;
+            // Write back the successfully created objects
+            write_back_objects(successes, file_format).await?;
 
-        let mut objects_to_delete: Vec<(ObjectType, MinimalObject)> = Vec::new();
+            let mut objects_to_delete: Vec<(ObjectType, MinimalObject)> = Vec::new();
 
-        for (object_type, path, contents) in deleted_files_and_contents {
-            let minimal_object =
-                get_minimal_object_from_contents(object_type, &contents, &file_format)
-                    .await
-                    .unwrap();
-            objects_to_delete.push((object_type, minimal_object));
+            for (object_type, _path, contents) in deleted_files_and_contents {
+                let minimal_object =
+                    get_minimal_object_from_contents(object_type, &contents, &file_format)
+                        .await
+                        .unwrap();
+                objects_to_delete.push((object_type, minimal_object));
+            }
+            let deleted_objects = delete_objects(client_config.clone(), objects_to_delete).await;
+            let (_, delete_errors) = handle_result_collection(deleted_objects);
+
+            errors.extend(delete_errors);
         }
-        let deleted_objects = delete_objects(client_config.clone(), objects_to_delete).await;
-        let (_, delete_errors) = handle_result_collection(deleted_objects);
-
-        errors.extend(delete_errors);
         info!("Run complete at {}", chrono::Utc::now());
     }
 }
@@ -206,13 +230,20 @@ pub async fn is_repo_effectively_empty(repo: &Repository) -> Result<bool, GitErr
     Ok(true)
 }
 
-/// Downloads the remote repository if the local folder is empty.
-///
-/// The function takes the local folder path, the remote repository URL and the authentication method.
-/// If the local folder is empty, it clones the remote repository into the local folder.
-/// If the local folder is not empty, it does nothing.
-/// If an error occurs during the cloning process, it returns `true`.
-/// Otherwise, it returns `false`.
+
+    /// Checks if a download of the remote repository is required by checking if the local config
+    /// folder is empty. If the folder is empty, it clones the remote repository into the folder
+    /// and checks if the repository is empty after cloning. If the repository is empty, it returns
+    /// true, indicating that a download is required. If the folder is not empty, it returns false.
+    /// If an error occurs during the check, it returns true.
+    ///
+    /// # Arguments
+    /// * `config_folder_path` - Path to the local config folder
+    /// * `remote_url` - URL of the remote repository
+    /// * `auth_method` - Authentication method to use when cloning the repository
+    ///
+    /// # Returns
+    /// * `Result<bool, Box<dyn std::error::Error>>` - Result indicating whether a download is required
 async fn download_required(
     config_folder_path: &Path,
     remote_url: &str,
@@ -265,7 +296,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let home_path = std::env::var("HOME")
         .map_err(|_| AppError::Other("HOME environment variable not set".to_string()))?;
     let app_config_path = home_path + "/.config/shepherd/config.toml";
-    let app_config = config::ShepherdConfig::from_file(&app_config_path).map_err(|e| {
+    let app_config = ShepherdConfig::from_file(&app_config_path).map_err(|e| {
         error!("Failed to load config: {}", e);
         AppError::Other("Failed to load config".to_string())
     });
