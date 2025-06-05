@@ -53,6 +53,7 @@ loop_interval = 60
 # in milliseconds
 retry_delay = 500
 branch = "main"
+insecure = false
 
 [auth_method]
 SshKey = "/Users/samuel/.ssh/shepherd"
