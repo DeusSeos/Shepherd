@@ -28,3 +28,13 @@ toml = "0.8.21"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 walkdir = "2.5.0"
+
+
+[workspace.metadata.cross.target.x86_64-unknown-linux-gnu]
+pre-build = [
+    "dpkg --add-architecture $CROSS_DEB_ARCH",
+    "apt-get update",
+    "apt-get install --assume-yes pkg-config",
+    "apt-get install --assume-yes libssl-dev:$CROSS_DEB_ARCH"
+]
+
