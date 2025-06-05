@@ -119,7 +119,9 @@ pub struct ShepherdConfig {
     pub retry_delay: u64,
     pub auth_method: GitAuth,
     #[serde(default = "default_branch")]
-    pub branch: String
+    pub branch: String,
+    #[serde(default = "default_insecure")]
+    pub insecure: bool
 
 }
 
@@ -176,6 +178,10 @@ fn default_branch() -> String {
     "main".to_string()
 }
 
+fn default_insecure() -> bool {
+    false
+}
+
 
 impl Display for ShepherdConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -200,6 +206,8 @@ impl Display for ShepherdConfig {
         writeln!(f, "Loop interval: {} seconds", self.loop_interval)?;
         writeln!(f, "Retry delay: {} milliseconds", self.retry_delay)?;
         writeln!(f, "Auth method: {:#?}", self.auth_method)?;
+        writeln!(f, "Branch: {}", self.branch)?;
+        writeln!(f, "Insecure: {}", self.insecure)?;
         Ok(())
     }
 }
