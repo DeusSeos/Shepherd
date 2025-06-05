@@ -7,11 +7,6 @@ on:
   push:
     tags:
       - v[0-9]+\.[0-9]+\.[0-9]+
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Release tag (e.g., v1.0.0)'
-        required: true
 
 jobs:
   create-release:
@@ -20,32 +15,19 @@ jobs:
       - uses: actions/checkout@v4
       - uses: taiki-e/create-gh-release-action@v1
         with:
+          # (optional) Path to changelog.
           changelog: CHANGELOG.md
+          # (required) GitHub token for creating GitHub Releases.
           token: ${{ secrets.GITHUB_TOKEN }}
 
   upload-assets:
     needs: create-release
-    strategy:
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-    runs-on: ${{ matrix.os }}
-    env:
-      CROSS_TARGET_IMAGE: ghcr.io/cross-rs/${{ matrix.target }}:main-openssl
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        run: rustup update stable
-
-      - name: Install cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
-
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
+          # (required) Comma-separated list of binary names (non-extension portion of filename) to build and upload.
           bin: shepherd
-          target: ${{ matrix.target }}
-          build-tool: cross
+          # (required) GitHub token for uploading assets to GitHub Releases.
           token: ${{ secrets.GITHUB_TOKEN }}
-
