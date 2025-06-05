@@ -312,18 +312,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     debug!("App config: {}", app_config);
 
-    let client = ShepherdClient::new(&app_config.endpoint_url, &app_config.token, true);
-    let config_folder_path = app_config.rancher_config_path;
-    let remote_url = app_config.remote_git_url.unwrap();
-    let file_format = app_config.file_format;
-    let client_config = client.config.clone();
+
+    let auth_method = app_config.auth_method;
+    let branch = app_config.branch;
     let cluster_ids = app_config.cluster_names.unwrap();
+    let config_folder_path = app_config.rancher_config_path;
+    let endpoint_url = app_config.endpoint_url;
+    let file_format = app_config.file_format;
+    let insecure = app_config.insecure;
     // in seconds
     let loop_interval = app_config.loop_interval;
+    let remote_url = app_config.remote_git_url.unwrap();
     // in milliseconds
     let retry_delay = app_config.retry_delay;
-    let branch = app_config.branch;
-    let auth_method = app_config.auth_method;
+    let token = app_config.token;
+    
+    let client = ShepherdClient::new(&endpoint_url, &token, insecure);
+    let client_config = client.config.clone();
 
     run_sync(
         client_config,
