@@ -37,7 +37,7 @@ Configuration as Code software for managing Rancher projects, roletemplates, and
 
 To output logs make sure to set the environment variable `RUST_LOG=none,shepherd=LOG_LEVEL` where `LOG_LEVEL` is of (`DEBUG`|`TRACE`|`INFO`)
 
-Set the config for shepherd at `~/.shepherd/config.toml`
+Set the config for shepherd at `~/.config/shepherd/config.toml`
 
 Example:
 
