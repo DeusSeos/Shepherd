@@ -8,13 +8,15 @@ use async_recursion::async_recursion;
 use git2::{
     Commit, Error as Git2Error, Index, IndexAddOption, Oid, ProxyOptions, PushOptions,
     RemoteCallbacks, Repository, Signature, Status, StatusOptions,
+    Diff, DiffOptions, Delta
 };
 
 use serde::{Deserialize, Serialize};
 use tokio::{fs::read_dir, time::sleep};
 use tracing::{debug, error, info, warn};
 
-use crate::models::ObjectType;
+use crate::{models::ObjectType, utils::file::{determine_object_type}};
+
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum GitAuth {
@@ -358,7 +360,7 @@ pub async fn get_modified_files(folder_path: &Path) -> Result<Vec<PathBuf>, Box<
 /// # Returns
 /// * `Result<(), String>` - Result indicating success or failure
 ///
-pub fn init_git_repo_with_main_branch(
+pub fn init_git_repo_with_name(
     folder_path: &Path,
     remote_url: &str,
     branch_name: &str,
@@ -432,6 +434,61 @@ pub fn init_git_repo_with_main_branch(
 
     Ok(())
 }
+
+
+/// Merge the changes from the remote branch into the local branch
+pub fn merge(
+    repo: &Repository,
+    branch: &str,
+    auth_method: &GitAuth,
+) -> Result<(), GitError> {
+    // Setup ProxyOptions
+    let mut proxy_options = ProxyOptions::new();
+    proxy_options.auto();
+
+    let mut callbacks = RemoteCallbacks::new();
+    callbacks.credentials(|url, username_from_url, allowed_types| {
+        match_credentials(url, username_from_url, allowed_types, auth_method).map_err(|e| e.into())
+    });
+
+    let mut remote = repo.find_remote("origin")?;
+    remote.connect_auth(git2::Direction::Fetch, Some(callbacks), Some(proxy_options))?;
+
+    let mut fetch_options = git2::FetchOptions::new();
+
+    let mut callbacks = RemoteCallbacks::new();
+    callbacks.credentials(|url, username_from_url, allowed_types| {
+        match_credentials(url, username_from_url, allowed_types, auth_method).map_err(|e| e.into())
+    });
+
+    let mut proxy_options = ProxyOptions::new();
+    proxy_options.auto();
+
+    fetch_options.remote_callbacks(callbacks);
+    fetch_options.proxy_options(proxy_options);
+
+    remote.fetch(&[branch], Some(&mut fetch_options), None)?;
+
+    let fetch_head = repo.find_reference("FETCH_HEAD")?;
+    let fetch_commit = repo.reference_to_annotated_commit(&fetch_head)?;
+    let analysis = repo.merge_analysis(&[&fetch_commit])?;
+
+    if analysis.0.is_up_to_date() {
+        Ok(())
+    } else if analysis.0.is_fast_forward() {
+        // Fast-forward merge we will skip this
+        let refname = format!("refs/heads/{}", branch);
+        let mut reference = repo.find_reference(&refname)?;
+        reference.set_target(fetch_commit.id(), "Fast-Forward")?;
+        repo.set_head(&refname)?;
+        repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))?;
+        Ok(())
+    } else {
+        resolve_conflicts(repo, branch)
+    }
+}
+
+
 
 /// Resolve any merge conflicts in the index by taking the remote branch's
 /// version of each file. If conflicts are detected, a merge commit is created
@@ -658,22 +715,22 @@ pub fn push_repo_to_remote(
     Ok(())
 }
 
-    /// Pulls the latest changes from the remote repository.
+    /// Fetches the latest changes from the remote repository.
     ///
     /// # Arguments
     ///
-    /// * `repo` - The git repository to pull changes into
-    /// * `branch` - The branch to pull changes from
+    /// * `repo` - The git repository to fetch changes into
+    /// * `branch` - The branch to fetch changes from
     /// * `auth_method` - The authentication method to use when pulling from the remote
     ///
     /// # Return
     ///
-    /// Returns `Ok(())` if the pull is successful, or an error if there is a problem.
+    /// Returns `Ok(())` if the fetch is successful, or an error if there is a problem.
     ///
     /// # Errors
     ///
     /// Returns `GitError::Other` if there is a problem with the merge analysis.
-pub fn pull_changes(
+pub fn fetch_changes(
     repo: &Repository,
     branch: &str,
     auth_method: &GitAuth,
@@ -712,11 +769,7 @@ pub fn pull_changes(
     if analysis.0.is_up_to_date() {
         Ok(())
     } else if analysis.0.is_fast_forward() {
-        let refname = format!("refs/heads/{}", branch);
-        let mut reference = repo.find_reference(&refname)?;
-        reference.set_target(fetch_commit.id(), "Fast-Forward")?;
-        repo.set_head(&refname)?;
-        repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))?;
+        // Fast-forward merge we will skip this
         Ok(())
     } else {
         Err(GitError::Other("Merge analysis failed".to_string()))
@@ -949,6 +1002,57 @@ pub async fn get_new_uncommited_files(
     Ok(new_files)
 }
 
+
+
+
+#[async_backtrace::framed]
+pub async fn get_new_files(folder_path: &Path, remote_branch: &str) -> Result<Vec<(ObjectType, PathBuf)>, Box<dyn Error>> {
+    let repo = Repository::discover(folder_path).map_err(|e| format!("Failed to open Git repo: {}", e))?;
+
+    // Resolve local HEAD
+    let head = repo.head()?.peel_to_commit()?;
+
+    // Resolve the specified remote branch reference (e.g., "origin/main")
+    let upstream_refname = format!("refs/remotes/origin/{}", remote_branch);
+    let upstream_ref = repo.find_reference(&upstream_refname)?;
+    let upstream_commit = upstream_ref.peel_to_commit()?;
+
+    // Find the merge base (common ancestor)
+    let base = repo.merge_base(head.id(), upstream_commit.id())?;
+    let base_commit = repo.find_commit(base)?;
+
+    // Generate a diff between the base and HEAD
+    let tree_old = base_commit.tree()?;
+    let tree_new = head.tree()?;
+
+    let diff = repo.diff_tree_to_tree(Some(&tree_old), Some(&tree_new), Some(&mut DiffOptions::new()))?;
+
+    // Collect paths of newly added files
+    let mut new_files = Vec::new();
+    diff.foreach(
+        &mut |delta, _| {
+            if delta.status() == Delta::Added {
+                if let Some(new_file) = delta.new_file().path() {
+                    // determine object type from path
+                    let object_type = determine_object_type(new_file);
+                    new_files.push((object_type, new_file.to_path_buf()));
+                }
+            }
+            true
+        },
+        None,
+        None,
+        None,
+    )?;
+
+    Ok(new_files)
+}
+
+
+
+
+
+
 /// Collect the deleted files from a given folder path
 ///
 /// # Arguments
@@ -1011,46 +1115,133 @@ pub async fn get_deleted_files(
     Ok(deleted_files)
 }
 
-/// Determine the object type from a path.
-///
-/// # Arguments
-/// * `path` - The path to determine the object type from.
-///
-/// # Returns
-/// The object type determined from the path.
-fn determine_object_type(path: &Path) -> ObjectType {
-    let file_name = path
-        .file_name()
-        .and_then(|f| f.to_str())
-        .unwrap_or_default();
 
-    let file_extension = if let Some(ext) = path.extension() {
-        ext.to_string_lossy().to_lowercase()
-    } else {
-        String::new()
+/// Collect all modifications (create, delete, modify) from a given repo
+/// 
+/// This function emulates `git diff --name-status HEAD..origin/main`
+/// 
+/// # Arguments
+/// * `repo` - The repository to collect modifications from
+/// * `branch_name` - The name of the branch to collect modifications from (e.g. "main")
+/// 
+/// # Returns
+/// (Vec<(ObjectType, PathBuf)>, Vec<(ObjectType, PathBuf), Vec<(ObjectType, PathBuf)>)
+/// A tuple of 3 vectors (created, deleted, modified)
+pub fn collect_modifications(repo: &Repository, branch_name: &str) -> (Vec<(ObjectType, PathBuf)>, Vec<(ObjectType, PathBuf)>, Vec<(ObjectType, PathBuf)>) {
+    let mut created = Vec::new();
+    let mut deleted = Vec::new();
+    let mut modified = Vec::new();
+
+    // Get the current HEAD commit
+    let head_commit = match repo.head() {
+        Ok(reference) => reference.peel_to_commit().expect("Failed to peel HEAD to commit"),
+        Err(e) => panic!("Failed to get HEAD: {}", e),
+    };
+    
+    // println!("Local HEAD commit: {}", head_commit.id());
+
+    // Get the remote branch commit (origin/branch_name)
+    let remote_ref_name = format!("refs/remotes/origin/{}", branch_name);
+    let remote_branch = match repo.find_reference(&remote_ref_name) {
+        Ok(reference) => reference,
+        Err(e) => panic!("Failed to find remote branch {}: {}", remote_ref_name, e),
+    };
+    
+    let remote_commit = remote_branch.peel_to_commit()
+        .expect("Failed to peel remote branch to commit");
+    
+    // println!("Remote branch commit: {}", remote_commit.id());
+
+    // This is what `git diff HEAD..origin/main` does:
+    // It shows what's in origin/main that's not in HEAD
+    let diff = match repo.diff_tree_to_tree(
+        Some(&head_commit.tree().expect("Failed to get HEAD tree")),
+        Some(&remote_commit.tree().expect("Failed to get remote tree")),
+        None,
+    ) {
+        Ok(diff) => diff,
+        Err(e) => panic!("Failed to get diff: {}", e),
     };
 
-    match (
-        file_name.ends_with(&format!(".project.{}", file_extension)),
-        file_name.ends_with(&format!(".prtb.{}", file_extension)),
-        file_name.ends_with(&format!(".rt.{}", file_extension)),
-        file_name.ends_with(&format!(".cluster.{}", file_extension)),
-    ) {
-        (true, _, _, _) => ObjectType::Project,
-        (_, true, _, _) => ObjectType::ProjectRoleTemplateBinding,
-        (_, _, true, _) => ObjectType::RoleTemplate,
-        (_, _, _, true) => ObjectType::Cluster,
-        _ => {
-            if path.components().any(|c| c.as_os_str() == "roles") {
-                ObjectType::RoleTemplate
-            } else if file_name.starts_with("prtb-") {
-                ObjectType::ProjectRoleTemplateBinding
-            } else {
-                ObjectType::Project
+    // println!("Found {} deltas in diff", diff.deltas().len());
+
+    // Process each change
+    for delta in diff.deltas() {
+        let status = delta.status();
+        
+        info!("Delta status: {:?}", status);
+        
+        match status {
+            Delta::Added => {
+                if let Some(path) = delta.new_file().path() {
+                    let object_type = determine_object_type(path);
+                    let full_path = repo.workdir()
+                    .expect("Repository has no working directory")
+                    .join(path);
+                info!("  Added: {:?}", path);
+                created.push((object_type, full_path));
+            }
+        },
+        Delta::Deleted => {
+            if let Some(path) = delta.old_file().path() {
+                    let object_type = determine_object_type(path);
+                    let full_path = repo.workdir()
+                    .expect("Repository has no working directory")
+                    .join(path);
+                info!("  Deleted: {:?}", path);
+                deleted.push((object_type, full_path));
+            }
+        },
+        Delta::Modified => {
+            if let Some(path) = delta.new_file().path() {
+                let object_type = determine_object_type(path);
+                    let full_path = repo.workdir()
+                        .expect("Repository has no working directory")
+                        .join(path);
+                    info!("  Modified: {:?}", path);
+                    modified.push((object_type, full_path));
+                }
+            },
+            _ => {
+                if let Some(path) = delta.new_file().path() {
+                    info!("  Other status: {:?} for {:?}", status, path);
+                }
             }
         }
     }
+
+    // println!("Created: {}, Deleted: {}, Modified: {}", 
+    //         created.len(), deleted.len(), modified.len());
+
+    (created, deleted, modified)
 }
+
+
+#[cfg(test)]
+#[test]
+fn test_collect_modifications() {
+    let repo = Repository::open("/Users/dc/Documents/Rust/rancher_config").unwrap();
+    let (created, deleted, modified) = collect_modifications(&repo, "main");
+
+    println!("Created:");
+    for (object_type, path) in created {
+        println!("  {:?} - {:?}",  object_type, path);
+    }
+    
+    println!("Deleted:");
+    for (object_type,  path) in deleted {
+        println!("  {:?} - {:?}",  object_type, path);
+    }
+    
+    println!("Modified:");
+    for (object_type,  path) in modified {
+        println!("  {:?} - {:?}",  object_type, path);
+    }
+}
+
+
+
+
 
 /// Collects deleted files and their contents from a given folder path.
 
@@ -1136,3 +1327,31 @@ pub async fn get_deleted_files_and_contents(
 
     Ok(deleted_files)
 }
+
+
+
+/// Given a pathbuf I want to retrieve the deleted contents using git
+/// 
+/// # Arguments
+/// * `path` - The path to the file to retrieve the contents of
+/// 
+/// # Returns
+/// A string containing the contents of the file
+/// 
+pub fn get_deleted_file_contents(path: &Path) -> Result<String, Box<dyn Error>> {
+    let repo = Repository::discover(path).map_err(|e| format!("Failed to open Git repo: {}", e))?;
+    let workdir = repo.workdir().ok_or("Repository has no working directory")?;
+
+    let git_rel_path = path.strip_prefix(workdir).unwrap();
+    // Get HEAD commit and its tree
+    let head_commit = repo.revparse_single("HEAD^{commit}")?;
+    let tree = head_commit.peel_to_tree()?;
+    // Find the tree entry for the file
+    let tree_entry = tree.get_path(git_rel_path)?;
+    let blob = repo.find_blob(tree_entry.id())?;
+    let contents = String::from_utf8(blob.content().to_vec()).map_err(|e| {
+        format!("Invalid UTF-8 in blob: {}", e)
+    })?;
+    Ok(contents)
+}
+

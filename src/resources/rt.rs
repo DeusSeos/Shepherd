@@ -41,11 +41,6 @@ pub const RT_EXCLUDE_PATHS: &[&str] = &[
 impl RancherResource for RoleTemplate {
     type ApiType = IoCattleManagementv3RoleTemplate;
 
-    async fn list(config: &Configuration, _: Option<&str>) -> Result<Vec<Self::ApiType>> {
-
-        let bindings_list = get_role_templates(config, None, None, None, None, None, None).await?;
-        Ok(bindings_list.items)
-    }
 
     async fn get(config: &Configuration, name: &str, _: &str) -> Result<Self> {
         let result = find_role_template(config, name, None).await;
@@ -653,6 +648,8 @@ pub async fn delete_role_template(
         }
     }
 }
+
+
 
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

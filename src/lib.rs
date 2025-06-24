@@ -63,7 +63,7 @@ include!(concat!(env!("OUT_DIR"), "/client_info.rs"));
 
 
 
-/// Downloads the current configuration from the Rancher API and stores it in a file.
+/// Downloads the current configuration from the Rancher API and stores it in a folder.
 ///
 /// This will create a folder structure mirroring the Rancher API, with clusters as subfolders
 /// containing projects and project role template bindings as subfolders, and role templates as

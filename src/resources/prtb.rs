@@ -1,7 +1,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{models::{CreatedObject, ObjectType, ResourceVersionMatch}, traits::RancherResource, utils::logging::log_api_error};
+use crate::{models::{CreatedObject, ObjectType, ResourceVersionMatch}, resources::prtb, traits::RancherResource, utils::logging::log_api_error};
 use anyhow::Result;
 
 use reqwest::StatusCode;
@@ -14,7 +14,7 @@ use rancher_client::{
             delete_management_cattle_io_v3_namespaced_project_role_template_binding,
             list_management_cattle_io_v3_namespaced_project_role_template_binding,
             list_management_cattle_io_v3_project_role_template_binding_for_all_namespaces,
-            patch_management_cattle_io_v3_namespaced_project_role_template_binding
+            patch_management_cattle_io_v3_namespaced_project_role_template_binding, read_management_cattle_io_v3_namespaced_project_role_template_binding
         },
         Error,
     },
@@ -42,16 +42,10 @@ pub const PRTB_EXCLUDE_PATHS: &[&str] = &[
 impl RancherResource for ProjectRoleTemplateBinding {
     type ApiType = IoCattleManagementv3ProjectRoleTemplateBinding;
 
-    async fn list(config: &Configuration, namespace: Option<&str>) -> Result<Vec<Self::ApiType>> {
-        let ns = namespace.ok_or_else(|| anyhow::anyhow!("Namespace is required for listing project role template bindings"))?;
-        let bindings_list = get_namespaced_project_role_template_bindings(config, ns, None, None, None, None, None, None).await?;
-        Ok(bindings_list.items)
-    }
-
     async fn get(config: &Configuration, name: &str, namespace: &str) -> Result<Self> {
         // For ProjectRoleTemplateBinding, we need to list and find the specific one
         // as there's no direct get method in the API
-        let bindings = Self::list(config, Some(namespace)).await?;
+        let bindings = get_namespaced_project_role_template_bindings(config, namespace, None, None, None, None, None, None).await?.items;
         let binding = bindings.iter()
             .find(|p| p.metadata.as_ref().and_then(|m| m.name.as_ref()) == Some(&name.to_string()))
             .ok_or_else(|| anyhow::anyhow!("Project role template binding not found: {}", name))?;
@@ -325,6 +319,100 @@ pub async fn get_all_project_role_template_bindings(
                 }
             }
         }
+    }
+}
+
+
+    /// Find a project role template binding from a cluster using the provided configuration
+    ///
+    /// # Arguments
+    ///
+    /// * `configuration` - The configuration to use for the request
+    /// * `project_id` - The ID of the project (namespace) to get the role template binding for
+    /// * `prtb_id` - The ID of the project role template binding to get
+    ///
+    /// # Returns
+    ///
+    /// * `IoCattleManagementv3ProjectRoleTemplateBinding` - The project role template binding
+    /// # Errors
+    ///
+    /// * `anyhow::Error` - The error that occurred while trying to get the project role template binding
+    pub async fn find_project_role_template_binding(configuration: &Configuration, project_id: &str, prtb_id: &str) -> Result<IoCattleManagementv3ProjectRoleTemplateBinding> {
+        let api_result = read_management_cattle_io_v3_namespaced_project_role_template_binding(
+        configuration,
+        prtb_id,
+        project_id,
+        None,
+        None,
+    )
+    .await;
+
+    trace!(api_result = ?api_result, "Received API response");
+
+    match api_result {
+        
+        Ok(response_content) => {
+            match response_content.status {
+                StatusCode::OK => {
+                    match serde_json::from_str::<IoCattleManagementv3ProjectRoleTemplateBinding>(&response_content.content) {
+                        Ok(data) => {
+                            info!("Successfully retrieved {} project role template binding for namespace {}", prtb_id, project_id);
+                            Ok(data)
+                        },
+                        Err(deserialize_err) => {
+                            let msg = format!("Failed to deserialize project role template bindings for project: {}. Response: {:#?}. Error: {:#?}", project_id, response_content, deserialize_err);
+                            error!("{}", msg);
+                            Err(anyhow::anyhow!(msg))
+                        }
+                    }
+                },
+                status => {
+                    let err = match serde_json::from_str::<serde_json::Value>(&response_content.content) {
+                        Ok(error_obj) => {
+                            anyhow::anyhow!(
+                                "Unexpected status code {} when getting project role template binding {} for project: {}: {}", 
+                                prtb_id,
+                                status, 
+                                project_id,
+                                serde_json::to_string_pretty(&error_obj).unwrap_or_else(|_| response_content.content.clone())
+                            )
+                        }
+                        Err(_) => {
+                            anyhow::anyhow!(
+                                "Unexpected status code {} when getting project role template binding {} for project: {}: {}", 
+                                prtb_id,
+                                status, 
+                                project_id,
+                                response_content.content
+                            )
+                        }
+                    };
+                    log_api_error("get_project_role_template_bindings:unexpected_status", &err);
+                    Err(err)
+                }
+            }
+        }
+        Err(e) => {
+            match e {
+                Error::ResponseError(response_content) => {
+                    let msg = match response_content.status {
+                        StatusCode::NOT_FOUND => format!("Project role template binding {} not found for project: {}", prtb_id, project_id),
+                        StatusCode::UNAUTHORIZED => format!( "Unauthorized access while trying to get project role template binding {} for project: {}", prtb_id, project_id ) ,
+                        StatusCode::BAD_REQUEST => format!( "Bad request while trying to get project role template binding {} for project: {}. Request body was: {}", prtb_id, project_id, response_content.content ) ,
+                        StatusCode::FORBIDDEN => format!( "Forbidden access while trying to get project role template binding {} for project: {}", prtb_id, project_id) ,
+                        _ => format!("Failed to get project role template binding {} for project: {}. Response: {:#?}", prtb_id, project_id, response_content) ,
+                    };
+                    error!("{}", msg);
+                    Err(anyhow::anyhow!(msg))
+                },            
+            _ => {
+                let msg = format!("Failed to get project role template binding {} for cluster: {}. Error: {:#?}", prtb_id, project_id, e);
+                error!("{}", msg);
+                Err(anyhow::anyhow!(msg))
+            }
+        }
+    }
+
     }
 }
 
@@ -831,7 +919,7 @@ pub struct ProjectRoleTemplateBinding {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub labels: Option<std::collections::HashMap<String, String>>,
 
-    /// the project (namespace) the project role template exists in
+    /// the namespace (project) the project role template exists in
     pub namespace: String,
 
     /// The name of the project the project role template is bound to (cluster-id:project-id)

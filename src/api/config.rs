@@ -45,6 +45,23 @@ pub struct RancherClusterConfig {
     pub projects: HashMap<String, (IoCattleManagementv3Project, Vec<IoCattleManagementv3ProjectRoleTemplateBinding>)>,
 }
 
+impl Display for RancherClusterConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Cluster: {}", self.cluster.spec.display_name)?;
+        writeln!(f, "Role Templates:")?;
+        for rt in &self.role_templates {
+            writeln!(f, "  - {}", rt.display_name.as_ref().unwrap())?;
+        }
+        writeln!(f, "Projects:")?;
+        for (project_id, (project, bindings)) in &self.projects {
+            writeln!(f, "  - {} (ID: {})", project.spec.as_ref().unwrap().display_name, project_id)?;
+            for binding in bindings {
+                writeln!(f, "    - Binding: {}", binding.metadata.as_ref().unwrap().name.as_ref().unwrap())?;
+            }
+        }
+        Ok(())
+    }
+}
 
 // conversion from ClusterConfig to RancherClusterConfig
 impl TryFrom<ClusterConfig> for RancherClusterConfig {

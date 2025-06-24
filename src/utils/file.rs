@@ -199,6 +199,69 @@ pub fn get_file_name_for_object(
 }
 
 
+/// Determine the object type from a path.
+///
+/// # Arguments
+/// * `path` - The path to determine the object type from.
+///
+/// # Returns
+/// The object type determined from the path.
+pub fn determine_object_type(path: &Path) -> ObjectType {
+    let file_name = path
+        .file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or_default();
+
+    let file_extension = if let Some(ext) = path.extension() {
+        ext.to_string_lossy().to_lowercase()
+    } else {
+        String::new()
+    };
+
+    match (
+        file_name.ends_with(&format!(".project.{}", file_extension)),
+        file_name.ends_with(&format!(".prtb.{}", file_extension)),
+        file_name.ends_with(&format!(".rt.{}", file_extension)),
+        file_name.ends_with(&format!(".cluster.{}", file_extension)),
+    ) {
+        (true, _, _, _) => ObjectType::Project,
+        (_, true, _, _) => ObjectType::ProjectRoleTemplateBinding,
+        (_, _, true, _) => ObjectType::RoleTemplate,
+        (_, _, _, true) => ObjectType::Cluster,
+        _ => {
+            if path.components().any(|c| c.as_os_str() == "roles") {
+                ObjectType::RoleTemplate
+            } else if file_name.starts_with("prtb-") {
+                ObjectType::ProjectRoleTemplateBinding
+            } else {
+                ObjectType::Project
+            }
+        }
+    }
+}
+
+
+/// Determine the object type and id from a path
+/// 
+/// # Arguments
+/// * `path` - The path to determine the object type and id from
+/// 
+/// # Returns
+/// A tuple containing the object type and id
+/// 
+pub fn determine_object_type_and_id(path: &Path) -> (ObjectType, String) {
+    let file_name = path.file_name().unwrap().to_string_lossy().to_string();
+    let id = file_name
+        .rsplit_once('.')
+        .unwrap_or((file_name.as_str(), ""))
+        .0
+        .to_string();
+    let object_type = determine_object_type(path);
+    (object_type, id)
+    
+}
+
+
 /// Generic function to write any type of object to a file in the given path (overwrites file content)
 /// `file_path` is the path to the directory where the file should be written
 /// `file_format` is the format of the file to write (yaml, json, or toml)
