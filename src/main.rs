@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use json_patch::jsonptr::delete;
+
 use rancher_client::apis::configuration::Configuration;
 use shepherd::api::client::ShepherdClient;
 use shepherd::api::config::ShepherdConfig;
@@ -94,6 +94,17 @@ async fn run_sync(
                 error!("Failed to initialize git repo: {}", e);
                 e
             })?;
+
+            let repo = Repository::open(&config_folder_path).map_err(|e| {
+                error!("Failed to open repository: {}", e);
+                e
+            })?;
+
+            // push changes
+            push_changes(&repo, branch_name, &auth_method).map_err(|e| {
+                error!("Failed to push changes: {}", e);
+                e
+            })?;
         }
         Ok(false) => {
             info!("Downloading not required");
@@ -119,13 +130,13 @@ async fn run_sync(
         // fetch changes
         let _ = fetch_changes(&repo, branch_name, &auth_method);
 
-        let (new_files, modified_files, deleted_files) = collect_modifications(&repo, branch_name);
+        let (new_files, deleted_files,  modified_files) = collect_modifications(&repo, branch_name);
 
         info!("New files: {:?}", new_files);
 
-        info!("Modified files: {:?}", modified_files);
-
         info!("Deleted files: {:?}", deleted_files);
+
+        info!("Modified files: {:?}", modified_files);
 
         let deleted_files_and_contents = deleted_files.iter().map(|(object_type, path)| {
             let contents = get_deleted_file_contents(path).unwrap();
@@ -277,7 +288,12 @@ async fn download_required(
         }
         Ok(false) => {
             info!("Directory is not empty: {}", config_folder_path.display());
-            // Handle non-empty directory case
+            // Check if there is a .git folder
+            let repo = Repository::open(config_folder_path)?;
+            if is_repo_effectively_empty(&repo).await? {
+                info!("Repository is empty after cloning (ignoring .git folder and .gitignored file)");
+                return Ok(true);
+            }
             Ok(false)
         }
         Err(e) => {

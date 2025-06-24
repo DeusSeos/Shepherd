@@ -378,39 +378,41 @@ pub fn init_git_repo_with_name(
         )));
     }
 
-    debug!(
-        "Initializing repository in folder: {}",
-        folder_path.display()
-    );
+    debug!("Initializing repository in folder: {}", folder_path.display());
     let repo = Repository::init(folder_path).map_err(GitError::Git)?;
 
-    debug!("Creating an initial commit in repository");
+    debug!("Creating a commit in repository");
     let sig = Signature::now(crate::FULL_CLIENT_ID, "shepherd@test.com").map_err(GitError::Git)?;
     let tree_id = {
         let mut index = repo.index().map_err(GitError::Git)?;
         index
-            .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+            .add_all(["*"].iter(), IndexAddOption::DEFAULT, None)
             .map_err(GitError::Git)?;
+        index.write().map_err(GitError::Git)?;
         index.write_tree().map_err(GitError::Git)?
     };
     let tree = repo.find_tree(tree_id).map_err(GitError::Git)?;
-    repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])
-        .map_err(GitError::Git)?;
 
+    if repo.is_empty().map_err(GitError::Git)? {
+        // Initial commit with no parent
+        repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])
+            .map_err(GitError::Git)?;
+    } else {
+        // Follow-up commit with parent
+        let parent = repo.head()?.peel_to_commit()?;
+        repo.commit(Some("HEAD"), &sig, &sig, "Follow-up commit", &tree, &[&parent])
+            .map_err(GitError::Git)?;
+    }
+
+    // Remote handling
     if repo.find_remote("origin").is_ok() {
         debug!("Remote 'origin' already exists — updating URL if necessary");
 
-        let current_url = repo
-            .find_remote("origin")?
-            .url()
-            .unwrap_or("<none>")
-            .to_string();
+        let current_url = repo.find_remote("origin")?
+            .url().unwrap_or("<none>").to_string();
 
         if current_url != remote_url {
-            debug!(
-                "Updating remote 'origin' URL from {} to {}",
-                current_url, remote_url
-            );
+            debug!("Updating remote 'origin' URL from {} to {}", current_url, remote_url);
             repo.remote_set_url("origin", remote_url)?;
         }
     } else {
@@ -418,22 +420,31 @@ pub fn init_git_repo_with_name(
         repo.remote("origin", remote_url)?;
     }
 
+    // Branch setup
     debug!("Creating and checking out branch: {}", branch_name);
-    let mut branch = repo
-        .branch(branch_name, &repo.head()?.peel_to_commit()?, false)
-        .map_err(GitError::Git)?;
-    repo.set_head(branch.get().name().unwrap_or("refs/heads/master"))
+    let head_commit = repo.head()?.peel_to_commit()?;
+    let mut branch = match repo.find_branch(branch_name, git2::BranchType::Local) {
+        Ok(existing_branch) => {
+            debug!("Branch '{}' already exists", branch_name);
+            existing_branch
+        }
+        Err(_) => {
+            debug!("Creating new branch '{}'", branch_name);
+            repo.branch(branch_name, &head_commit, false).map_err(GitError::Git)?
+        }
+    };
+    repo.set_head(branch.get().name().unwrap_or("refs/heads/main"))
         .map_err(GitError::Git)?;
     repo.checkout_head(Some(git2::build::CheckoutBuilder::new().safe()))
         .map_err(GitError::Git)?;
 
-    // Set up branch to track remote
     branch
         .set_upstream(Some("origin/main"))
         .map_err(GitError::Git)?;
 
     Ok(())
 }
+
 
 
 /// Merge the changes from the remote branch into the local branch
