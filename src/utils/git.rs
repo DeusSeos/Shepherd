@@ -1225,31 +1225,6 @@ pub fn collect_modifications(repo: &Repository, branch_name: &str) -> (Vec<(Obje
 }
 
 
-#[cfg(test)]
-#[test]
-fn test_collect_modifications() {
-    let repo = Repository::open("/Users/dc/Documents/Rust/rancher_config").unwrap();
-    let (created, deleted, modified) = collect_modifications(&repo, "main");
-
-    println!("Created:");
-    for (object_type, path) in created {
-        println!("  {:?} - {:?}",  object_type, path);
-    }
-    
-    println!("Deleted:");
-    for (object_type,  path) in deleted {
-        println!("  {:?} - {:?}",  object_type, path);
-    }
-    
-    println!("Modified:");
-    for (object_type,  path) in modified {
-        println!("  {:?} - {:?}",  object_type, path);
-    }
-}
-
-
-
-
 
 /// Collects deleted files and their contents from a given folder path.
 /// 
