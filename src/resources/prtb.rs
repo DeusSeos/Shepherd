@@ -592,9 +592,9 @@ pub async fn get_namespaced_project_role_template_bindings(
         Ok(response_content) => {
 
             match response_content.status {
-                StatusCode::OK => match serde_json::from_str(&response_content.content) {
+                StatusCode::OK => match serde_json::from_str::<IoCattleManagementv3ProjectRoleTemplateBindingList>(&response_content.content) {
                     Ok(data) => {
-                        debug!("Successfully deserialized prtb response content");
+                        info!("Successfully fetched {} project role template bindings for project: {}", data.items.len(), project_id);
                         Ok(data)
                     }
                     Err(deserialize_err) => {
