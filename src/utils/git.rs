@@ -8,13 +8,15 @@ use async_recursion::async_recursion;
 use git2::{
     Commit, Error as Git2Error, Index, IndexAddOption, Oid, ProxyOptions, PushOptions,
     RemoteCallbacks, Repository, Signature, Status, StatusOptions,
+    DiffOptions, Delta
 };
 
 use serde::{Deserialize, Serialize};
 use tokio::{fs::read_dir, time::sleep};
 use tracing::{debug, error, info, warn};
 
-use crate::models::ObjectType;
+use crate::{models::ObjectType, utils::file::{determine_object_type}};
+
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum GitAuth {
@@ -132,7 +134,6 @@ pub async fn safe_clone_repository(
                     }
                     _ => Err(git2::Error::from_str("Unsupported authentication method")),
                 }
-                .map_err(|e| e.into())
             })
             .transfer_progress(|progress| {
                 debug!(
@@ -358,7 +359,7 @@ pub async fn get_modified_files(folder_path: &Path) -> Result<Vec<PathBuf>, Box<
 /// # Returns
 /// * `Result<(), String>` - Result indicating success or failure
 ///
-pub fn init_git_repo_with_main_branch(
+pub fn init_git_repo_with_name(
     folder_path: &Path,
     remote_url: &str,
     branch_name: &str,
@@ -376,39 +377,41 @@ pub fn init_git_repo_with_main_branch(
         )));
     }
 
-    debug!(
-        "Initializing repository in folder: {}",
-        folder_path.display()
-    );
+    debug!("Initializing repository in folder: {}", folder_path.display());
     let repo = Repository::init(folder_path).map_err(GitError::Git)?;
 
-    debug!("Creating an initial commit in repository");
+    debug!("Creating a commit in repository");
     let sig = Signature::now(crate::FULL_CLIENT_ID, "shepherd@test.com").map_err(GitError::Git)?;
     let tree_id = {
         let mut index = repo.index().map_err(GitError::Git)?;
         index
-            .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+            .add_all(["*"].iter(), IndexAddOption::DEFAULT, None)
             .map_err(GitError::Git)?;
+        index.write().map_err(GitError::Git)?;
         index.write_tree().map_err(GitError::Git)?
     };
     let tree = repo.find_tree(tree_id).map_err(GitError::Git)?;
-    repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])
-        .map_err(GitError::Git)?;
 
+    if repo.is_empty().map_err(GitError::Git)? {
+        // Initial commit with no parent
+        repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])
+            .map_err(GitError::Git)?;
+    } else {
+        // Follow-up commit with parent
+        let parent = repo.head()?.peel_to_commit()?;
+        repo.commit(Some("HEAD"), &sig, &sig, "Follow-up commit", &tree, &[&parent])
+            .map_err(GitError::Git)?;
+    }
+
+    // Remote handling
     if repo.find_remote("origin").is_ok() {
         debug!("Remote 'origin' already exists — updating URL if necessary");
 
-        let current_url = repo
-            .find_remote("origin")?
-            .url()
-            .unwrap_or("<none>")
-            .to_string();
+        let current_url = repo.find_remote("origin")?
+            .url().unwrap_or("<none>").to_string();
 
         if current_url != remote_url {
-            debug!(
-                "Updating remote 'origin' URL from {} to {}",
-                current_url, remote_url
-            );
+            debug!("Updating remote 'origin' URL from {} to {}", current_url, remote_url);
             repo.remote_set_url("origin", remote_url)?;
         }
     } else {
@@ -416,22 +419,86 @@ pub fn init_git_repo_with_main_branch(
         repo.remote("origin", remote_url)?;
     }
 
+    // Branch setup
     debug!("Creating and checking out branch: {}", branch_name);
-    let mut branch = repo
-        .branch(branch_name, &repo.head()?.peel_to_commit()?, false)
-        .map_err(GitError::Git)?;
-    repo.set_head(branch.get().name().unwrap_or("refs/heads/master"))
+    let head_commit = repo.head()?.peel_to_commit()?;
+    let mut branch = match repo.find_branch(branch_name, git2::BranchType::Local) {
+        Ok(existing_branch) => {
+            debug!("Branch '{}' already exists", branch_name);
+            existing_branch
+        }
+        Err(_) => {
+            debug!("Creating new branch '{}'", branch_name);
+            repo.branch(branch_name, &head_commit, false).map_err(GitError::Git)?
+        }
+    };
+    repo.set_head(branch.get().name().unwrap_or("refs/heads/main"))
         .map_err(GitError::Git)?;
     repo.checkout_head(Some(git2::build::CheckoutBuilder::new().safe()))
         .map_err(GitError::Git)?;
 
-    // Set up branch to track remote
     branch
         .set_upstream(Some("origin/main"))
         .map_err(GitError::Git)?;
 
     Ok(())
 }
+
+
+
+/// Merge the changes from the remote branch into the local branch
+pub fn merge(
+    repo: &Repository,
+    branch: &str,
+    auth_method: &GitAuth,
+) -> Result<(), GitError> {
+    // Setup ProxyOptions
+    let mut proxy_options = ProxyOptions::new();
+    proxy_options.auto();
+
+    let mut callbacks = RemoteCallbacks::new();
+    callbacks.credentials(|url, username_from_url, allowed_types| {
+        match_credentials(url, username_from_url, allowed_types, auth_method)
+    });
+
+    let mut remote = repo.find_remote("origin")?;
+    remote.connect_auth(git2::Direction::Fetch, Some(callbacks), Some(proxy_options))?;
+
+    let mut fetch_options = git2::FetchOptions::new();
+
+    let mut callbacks = RemoteCallbacks::new();
+    callbacks.credentials(|url, username_from_url, allowed_types| {
+        match_credentials(url, username_from_url, allowed_types, auth_method)
+    });
+
+    let mut proxy_options = ProxyOptions::new();
+    proxy_options.auto();
+
+    fetch_options.remote_callbacks(callbacks);
+    fetch_options.proxy_options(proxy_options);
+
+    remote.fetch(&[branch], Some(&mut fetch_options), None)?;
+
+    let fetch_head = repo.find_reference("FETCH_HEAD")?;
+    let fetch_commit = repo.reference_to_annotated_commit(&fetch_head)?;
+    let analysis = repo.merge_analysis(&[&fetch_commit])?;
+
+    if analysis.0.is_up_to_date() {
+        Ok(())
+    } else if analysis.0.is_fast_forward() {
+        // Fast-forward merge we will skip this
+        let refname = format!("refs/heads/{}", branch);
+        let mut reference = repo.find_reference(&refname)?;
+        reference.set_target(fetch_commit.id(), "Fast-Forward")?;
+        repo.set_head(&refname)?;
+        repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))?;
+        Ok(())
+    } else {
+        resolve_conflicts(repo, branch)
+    }
+}
+
+
 
 /// Resolve any merge conflicts in the index by taking the remote branch's
 /// version of each file. If conflicts are detected, a merge commit is created
@@ -614,7 +681,6 @@ pub fn push_repo_to_remote(
                     }
                 }
             }
-            .map_err(|e| e.into())
         })
         .transfer_progress(|progress| {
             debug!(
@@ -658,22 +724,22 @@ pub fn push_repo_to_remote(
     Ok(())
 }
 
-    /// Pulls the latest changes from the remote repository.
+    /// Fetches the latest changes from the remote repository.
     ///
     /// # Arguments
     ///
-    /// * `repo` - The git repository to pull changes into
-    /// * `branch` - The branch to pull changes from
+    /// * `repo` - The git repository to fetch changes into
+    /// * `branch` - The branch to fetch changes from
     /// * `auth_method` - The authentication method to use when pulling from the remote
     ///
     /// # Return
     ///
-    /// Returns `Ok(())` if the pull is successful, or an error if there is a problem.
+    /// Returns `Ok(())` if the fetch is successful, or an error if there is a problem.
     ///
     /// # Errors
     ///
     /// Returns `GitError::Other` if there is a problem with the merge analysis.
-pub fn pull_changes(
+pub fn fetch_changes(
     repo: &Repository,
     branch: &str,
     auth_method: &GitAuth,
@@ -684,7 +750,7 @@ pub fn pull_changes(
 
     let mut callbacks = RemoteCallbacks::new();
     callbacks.credentials(|url, username_from_url, allowed_types| {
-        match_credentials(url, username_from_url, allowed_types, auth_method).map_err(|e| e.into())
+        match_credentials(url, username_from_url, allowed_types, auth_method)
     });
 
     let mut remote = repo.find_remote("origin")?;
@@ -694,7 +760,7 @@ pub fn pull_changes(
 
     let mut callbacks = RemoteCallbacks::new();
     callbacks.credentials(|url, username_from_url, allowed_types| {
-        match_credentials(url, username_from_url, allowed_types, auth_method).map_err(|e| e.into())
+        match_credentials(url, username_from_url, allowed_types, auth_method)
     });
 
     let mut proxy_options = ProxyOptions::new();
@@ -712,11 +778,7 @@ pub fn pull_changes(
     if analysis.0.is_up_to_date() {
         Ok(())
     } else if analysis.0.is_fast_forward() {
-        let refname = format!("refs/heads/{}", branch);
-        let mut reference = repo.find_reference(&refname)?;
-        reference.set_target(fetch_commit.id(), "Fast-Forward")?;
-        repo.set_head(&refname)?;
-        repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))?;
+        // Fast-forward merge we will skip this
         Ok(())
     } else {
         Err(GitError::Other("Merge analysis failed".to_string()))
@@ -776,7 +838,7 @@ pub fn push_changes(
 ) -> Result<(), GitError> {
     let mut remote_callbacks = RemoteCallbacks::new();
     remote_callbacks.credentials(|url, username_from_url, allowed_types| {
-        match_credentials(url, username_from_url, allowed_types, auth_method).map_err(|e| e.into())
+        match_credentials(url, username_from_url, allowed_types, auth_method)
     });
 
     let mut proxy_options = ProxyOptions::new();
@@ -949,6 +1011,57 @@ pub async fn get_new_uncommited_files(
     Ok(new_files)
 }
 
+
+
+
+#[async_backtrace::framed]
+pub async fn get_new_files(folder_path: &Path, remote_branch: &str) -> Result<Vec<(ObjectType, PathBuf)>, Box<dyn Error>> {
+    let repo = Repository::discover(folder_path).map_err(|e| format!("Failed to open Git repo: {}", e))?;
+
+    // Resolve local HEAD
+    let head = repo.head()?.peel_to_commit()?;
+
+    // Resolve the specified remote branch reference (e.g., "origin/main")
+    let upstream_refname = format!("refs/remotes/origin/{}", remote_branch);
+    let upstream_ref = repo.find_reference(&upstream_refname)?;
+    let upstream_commit = upstream_ref.peel_to_commit()?;
+
+    // Find the merge base (common ancestor)
+    let base = repo.merge_base(head.id(), upstream_commit.id())?;
+    let base_commit = repo.find_commit(base)?;
+
+    // Generate a diff between the base and HEAD
+    let tree_old = base_commit.tree()?;
+    let tree_new = head.tree()?;
+
+    let diff = repo.diff_tree_to_tree(Some(&tree_old), Some(&tree_new), Some(&mut DiffOptions::new()))?;
+
+    // Collect paths of newly added files
+    let mut new_files = Vec::new();
+    diff.foreach(
+        &mut |delta, _| {
+            if delta.status() == Delta::Added {
+                if let Some(new_file) = delta.new_file().path() {
+                    // determine object type from path
+                    let object_type = determine_object_type(new_file);
+                    new_files.push((object_type, new_file.to_path_buf()));
+                }
+            }
+            true
+        },
+        None,
+        None,
+        None,
+    )?;
+
+    Ok(new_files)
+}
+
+
+
+
+
+
 /// Collect the deleted files from a given folder path
 ///
 /// # Arguments
@@ -958,7 +1071,6 @@ pub async fn get_new_uncommited_files(
 /// A vector containing the absolute paths of all deleted files
 /// in the specified folder and its subfolders, along with their corresponding
 /// object type.
-
 #[async_backtrace::framed]
 #[async_recursion]
 pub async fn get_deleted_files(
@@ -1011,49 +1123,111 @@ pub async fn get_deleted_files(
     Ok(deleted_files)
 }
 
-/// Determine the object type from a path.
-///
-/// # Arguments
-/// * `path` - The path to determine the object type from.
-///
-/// # Returns
-/// The object type determined from the path.
-fn determine_object_type(path: &Path) -> ObjectType {
-    let file_name = path
-        .file_name()
-        .and_then(|f| f.to_str())
-        .unwrap_or_default();
 
-    let file_extension = if let Some(ext) = path.extension() {
-        ext.to_string_lossy().to_lowercase()
-    } else {
-        String::new()
+/// Collect all modifications (create, delete, modify) from a given repo
+/// 
+/// This function emulates `git diff --name-status HEAD..origin/main`
+/// 
+/// # Arguments
+/// * `repo` - The repository to collect modifications from
+/// * `branch_name` - The name of the branch to collect modifications from (e.g. "main")
+/// 
+/// # Returns
+/// (Vec<(ObjectType, PathBuf)>, Vec<(ObjectType, PathBuf), Vec<(ObjectType, PathBuf)>)
+/// A tuple of 3 vectors (created, deleted, modified)
+pub fn collect_modifications(repo: &Repository, branch_name: &str) -> (Vec<(ObjectType, PathBuf)>, Vec<(ObjectType, PathBuf)>, Vec<(ObjectType, PathBuf)>) {
+    let mut created = Vec::new();
+    let mut deleted = Vec::new();
+    let mut modified = Vec::new();
+
+    // Get the current HEAD commit
+    let head_commit = match repo.head() {
+        Ok(reference) => reference.peel_to_commit().expect("Failed to peel HEAD to commit"),
+        Err(e) => panic!("Failed to get HEAD: {}", e),
+    };
+    
+    // println!("Local HEAD commit: {}", head_commit.id());
+
+    // Get the remote branch commit (origin/branch_name)
+    let remote_ref_name = format!("refs/remotes/origin/{}", branch_name);
+    let remote_branch = match repo.find_reference(&remote_ref_name) {
+        Ok(reference) => reference,
+        Err(e) => panic!("Failed to find remote branch {}: {}", remote_ref_name, e),
+    };
+    
+    let remote_commit = remote_branch.peel_to_commit()
+        .expect("Failed to peel remote branch to commit");
+    
+    // println!("Remote branch commit: {}", remote_commit.id());
+
+    // This is what `git diff HEAD..origin/main` does:
+    // It shows what's in origin/main that's not in HEAD
+    let diff = match repo.diff_tree_to_tree(
+        Some(&head_commit.tree().expect("Failed to get HEAD tree")),
+        Some(&remote_commit.tree().expect("Failed to get remote tree")),
+        None,
+    ) {
+        Ok(diff) => diff,
+        Err(e) => panic!("Failed to get diff: {}", e),
     };
 
-    match (
-        file_name.ends_with(&format!(".project.{}", file_extension)),
-        file_name.ends_with(&format!(".prtb.{}", file_extension)),
-        file_name.ends_with(&format!(".rt.{}", file_extension)),
-        file_name.ends_with(&format!(".cluster.{}", file_extension)),
-    ) {
-        (true, _, _, _) => ObjectType::Project,
-        (_, true, _, _) => ObjectType::ProjectRoleTemplateBinding,
-        (_, _, true, _) => ObjectType::RoleTemplate,
-        (_, _, _, true) => ObjectType::Cluster,
-        _ => {
-            if path.components().any(|c| c.as_os_str() == "roles") {
-                ObjectType::RoleTemplate
-            } else if file_name.starts_with("prtb-") {
-                ObjectType::ProjectRoleTemplateBinding
-            } else {
-                ObjectType::Project
+    // println!("Found {} deltas in diff", diff.deltas().len());
+
+    // Process each change
+    for delta in diff.deltas() {
+        let status = delta.status();
+        
+        info!("Delta status: {:?}", status);
+        
+        match status {
+            Delta::Added => {
+                if let Some(path) = delta.new_file().path() {
+                    let object_type = determine_object_type(path);
+                    let full_path = repo.workdir()
+                    .expect("Repository has no working directory")
+                    .join(path);
+                info!("  Added: {:?}", path);
+                created.push((object_type, full_path));
+            }
+        },
+        Delta::Deleted => {
+            if let Some(path) = delta.old_file().path() {
+                    let object_type = determine_object_type(path);
+                    let full_path = repo.workdir()
+                    .expect("Repository has no working directory")
+                    .join(path);
+                info!("  Deleted: {:?}", path);
+                deleted.push((object_type, full_path));
+            }
+        },
+        Delta::Modified => {
+            if let Some(path) = delta.new_file().path() {
+                let object_type = determine_object_type(path);
+                    let full_path = repo.workdir()
+                        .expect("Repository has no working directory")
+                        .join(path);
+                    info!("  Modified: {:?}", path);
+                    modified.push((object_type, full_path));
+                }
+            },
+            _ => {
+                if let Some(path) = delta.new_file().path() {
+                    info!("  Other status: {:?} for {:?}", status, path);
+                }
             }
         }
     }
+
+    // println!("Created: {}, Deleted: {}, Modified: {}", 
+    //         created.len(), deleted.len(), modified.len());
+
+    (created, deleted, modified)
 }
 
-/// Collects deleted files and their contents from a given folder path.
 
+
+/// Collects deleted files and their contents from a given folder path.
+/// 
 /// # Arguments
 /// * `folder_path` - The path of the folder to collect deleted files from.
 ///
@@ -1136,3 +1310,31 @@ pub async fn get_deleted_files_and_contents(
 
     Ok(deleted_files)
 }
+
+
+
+/// Given a pathbuf I want to retrieve the deleted contents using git
+/// 
+/// # Arguments
+/// * `path` - The path to the file to retrieve the contents of
+/// 
+/// # Returns
+/// A string containing the contents of the file
+/// 
+pub fn get_deleted_file_contents(path: &Path) -> Result<String, Box<dyn Error>> {
+    let repo = Repository::discover(path).map_err(|e| format!("Failed to open Git repo: {}", e))?;
+    let workdir = repo.workdir().ok_or("Repository has no working directory")?;
+
+    let git_rel_path = path.strip_prefix(workdir).unwrap();
+    // Get HEAD commit and its tree
+    let head_commit = repo.revparse_single("HEAD^{commit}")?;
+    let tree = head_commit.peel_to_tree()?;
+    // Find the tree entry for the file
+    let tree_entry = tree.get_path(git_rel_path)?;
+    let blob = repo.find_blob(tree_entry.id())?;
+    let contents = String::from_utf8(blob.content().to_vec()).map_err(|e| {
+        format!("Invalid UTF-8 in blob: {}", e)
+    })?;
+    Ok(contents)
+}
+

@@ -4,7 +4,7 @@ use anyhow::{bail, Context, Result};
 
 use serde::{de::DeserializeOwned, Serialize, Deserialize};
 use tokio::{fs::OpenOptions, io::AsyncWriteExt, task::JoinHandle, fs::read_dir};
-use tracing::{debug, error};
+use tracing::{debug, error, trace};
 
 use crate::{load_object, models::{CreatedObject, MinimalObject, ObjectType}, resources::project::Project, resources::prtb::ProjectRoleTemplateBinding, resources::rt::RoleTemplate, serialize_object};
 
@@ -128,7 +128,7 @@ pub async fn write_back_objects(
     file_format: FileFormat,
 ) -> anyhow::Result<Vec<PathBuf>> {
     let mut handles: Vec<JoinHandle<anyhow::Result<PathBuf>>> = Vec::new();
-    let mut results = Vec::new();
+    let mut results: Vec<PathBuf> = Vec::new();
 
     // Spawn tasks to write back objects
     for (file_path, created_object) in successes {
@@ -136,19 +136,20 @@ pub async fn write_back_objects(
         handles.push(tokio::spawn(async move {
             match created_object {
                 CreatedObject::ProjectRoleTemplateBinding(created) => {
-                    debug!("Writing PRTB: {:#?}", created);
+                    trace!("Writing PRTB");
                     let convert = ProjectRoleTemplateBinding::try_from(created)?;
                     write_object_to_file(&file_path, &format, &convert).await?;
                     Ok(file_path)
                 }
                 CreatedObject::Project(created) => {
-                    debug!("Writing Project: {:#?}", created);
+                    trace!("Writing Project");
                     let convert = Project::try_from(created)?;
                     write_object_to_file(&file_path, &format, &convert).await?;
                     Ok(file_path)
                 }
                 CreatedObject::RoleTemplate(created) => {
-                    debug!("Writing Role Template: {:#?}", created);
+                    debug!("Writing RT");
+                    trace!("Writing Role Template: {:#?}", created);
                     let convert = RoleTemplate::try_from(created)?;
                     write_object_to_file(&file_path, &format, &convert).await?;
                     Ok(file_path)
@@ -196,6 +197,69 @@ pub fn get_file_name_for_object(
         ObjectType::Cluster => format!("{}.cluster.{}", object_id, extension),
         // _ => format!("{}.{}", object_id, extension),
     }
+}
+
+
+/// Determine the object type from a path.
+///
+/// # Arguments
+/// * `path` - The path to determine the object type from.
+///
+/// # Returns
+/// The object type determined from the path.
+pub fn determine_object_type(path: &Path) -> ObjectType {
+    let file_name = path
+        .file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or_default();
+
+    let file_extension = if let Some(ext) = path.extension() {
+        ext.to_string_lossy().to_lowercase()
+    } else {
+        String::new()
+    };
+
+    match (
+        file_name.ends_with(&format!(".project.{}", file_extension)),
+        file_name.ends_with(&format!(".prtb.{}", file_extension)),
+        file_name.ends_with(&format!(".rt.{}", file_extension)),
+        file_name.ends_with(&format!(".cluster.{}", file_extension)),
+    ) {
+        (true, _, _, _) => ObjectType::Project,
+        (_, true, _, _) => ObjectType::ProjectRoleTemplateBinding,
+        (_, _, true, _) => ObjectType::RoleTemplate,
+        (_, _, _, true) => ObjectType::Cluster,
+        _ => {
+            if path.components().any(|c| c.as_os_str() == "roles") {
+                ObjectType::RoleTemplate
+            } else if file_name.starts_with("prtb-") {
+                ObjectType::ProjectRoleTemplateBinding
+            } else {
+                ObjectType::Project
+            }
+        }
+    }
+}
+
+
+/// Determine the object type and id from a path
+/// 
+/// # Arguments
+/// * `path` - The path to determine the object type and id from
+/// 
+/// # Returns
+/// A tuple containing the object type and id
+/// 
+pub fn determine_object_type_and_id(path: &Path) -> (ObjectType, String) {
+    let file_name = path.file_name().unwrap().to_string_lossy().to_string();
+    let id = file_name
+        .rsplit_once('.')
+        .unwrap_or((file_name.as_str(), ""))
+        .0
+        .to_string();
+    let object_type = determine_object_type(path);
+    (object_type, id)
+    
 }
 
 

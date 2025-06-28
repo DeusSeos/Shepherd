@@ -20,26 +20,26 @@ pub fn compute_cluster_diff(
     desired_state: &Value,
 ) -> HashMap< (ObjectType, String, Option<String>), Value> {
 
-    let current_state: RancherClusterConfig = serde_json::from_value(current_state.clone()).unwrap();
     let desired_state: RancherClusterConfig = serde_json::from_value(desired_state.clone()).unwrap();
+    let current_state: RancherClusterConfig = serde_json::from_value(current_state.clone()).unwrap();
 
-    let c_role_template = current_state.role_templates.clone();
-    let c_project = current_state.projects.clone();
+    let d_role_template = desired_state.role_templates.clone();
+    let d_project = desired_state.projects.clone();
 
     let mut patches: HashMap<(ObjectType, String, Option<String>), Value> = HashMap::new();
 
-    for crt in &c_role_template {
-        if let Some(desired_rt) = desired_state
+    for drole_template in &d_role_template {
+        if let Some(crt) = current_state
             .role_templates
             .iter()
-            .find(|drole_template| drole_template.metadata.as_ref().unwrap().name == crt.metadata.as_ref().unwrap().name) {
+            .find(|crole_template| crole_template.metadata.as_ref().unwrap().name == drole_template.metadata.as_ref().unwrap().name) {
 
+            let mut drtv = serde_json::to_value(drole_template).unwrap();
             let mut crtv = serde_json::to_value(crt).unwrap();
-            let mut drtv = serde_json::to_value(desired_rt).unwrap();
-            clean_up_value(&mut crtv, RT_EXCLUDE_PATHS);
             clean_up_value(&mut drtv, RT_EXCLUDE_PATHS);
+            clean_up_value(&mut crtv, RT_EXCLUDE_PATHS);
             let patch = calculate_json_patch::<IoCattleManagementv3RoleTemplate>(&crtv, &drtv);
-            let rt_id = crt.metadata.as_ref().unwrap().name.clone().unwrap();
+            let rt_id = drole_template.metadata.as_ref().unwrap().name.clone().unwrap();
             if let Some(patch) = patch {
                 debug!("RoleTemplate `{}` diff computed and added to patches", rt_id);
                 patches.insert((ObjectType::RoleTemplate, rt_id, None), patch);
@@ -47,34 +47,37 @@ pub fn compute_cluster_diff(
         }
     }
 
-    for (c_project_id, (c_project, cprtbs)) in &c_project {
-        if let Some((d_project, dprtbs)) = desired_state.projects.get(c_project_id) {
-
-            let mut cpv = serde_json::to_value(c_project).unwrap();
+    for (d_project_id, (d_project, dprtbs)) in &d_project {
+        if let Some((c_project, cprtbs)) = current_state.projects.get(d_project_id) {
             let mut dpv = serde_json::to_value(d_project).unwrap();
-            clean_up_value(&mut cpv, PROJECT_EXCLUDE_PATHS);
+            let mut cpv = serde_json::to_value(c_project).unwrap();
             clean_up_value(&mut dpv, PROJECT_EXCLUDE_PATHS);
+            clean_up_value(&mut cpv, PROJECT_EXCLUDE_PATHS);
             let patch = calculate_json_patch::<IoCattleManagementv3Project>(&cpv, &dpv);
-            let cluster_id = c_project.metadata.as_ref().unwrap().namespace.clone().unwrap();
+            let cluster_id = d_project.metadata.as_ref().unwrap().namespace.clone().unwrap();
             if let Some(patch) = patch {
-                patches.insert((ObjectType::Project, c_project_id.to_string(), Some(cluster_id.clone())), patch);
-                debug!("Project `{}` diff computed and added to patches", c_project_id);
+                patches.insert((ObjectType::Project, d_project_id.to_string(), Some(cluster_id.clone())), patch);
+                debug!("Project `{}` diff computed and added to patches", d_project_id);
             }
 
-            for cprtb in cprtbs {
-                if let Some(desired_prtb) = dprtbs.iter().find(|dprtb| dprtb.metadata.as_ref().unwrap().name == cprtb.metadata.as_ref().unwrap().name) {
+            for dprtb in dprtbs {
+                if let Some(cprtb) = cprtbs.iter().find(|cprtb| cprtb.metadata.as_ref().unwrap().name == dprtb.metadata.as_ref().unwrap().name) {
+                    let mut dprtbv = serde_json::to_value(dprtb).unwrap();
                     let mut cprtbv = serde_json::to_value(cprtb).unwrap();
-                    let mut dprtbv = serde_json::to_value(desired_prtb).unwrap();
-                    clean_up_value(&mut cprtbv, PRTB_EXCLUDE_PATHS);
                     clean_up_value(&mut dprtbv, PRTB_EXCLUDE_PATHS);
+                    clean_up_value(&mut cprtbv, PRTB_EXCLUDE_PATHS);
                     let patch = calculate_json_patch::<IoCattleManagementv3ProjectRoleTemplateBinding>(&cprtbv, &dprtbv);
-                    let prtb_id = cprtb.metadata.as_ref().unwrap().name.clone().unwrap();
+                    let prtb_id = dprtb.metadata.as_ref().unwrap().name.clone().unwrap();
                     if let Some(patch) = patch {
                         debug!("ProjectRoleTemplateBinding `{}` diff computed and added to patches", prtb_id);
-                        patches.insert((ObjectType::ProjectRoleTemplateBinding, prtb_id, Some(c_project_id.clone())), patch);
+                        patches.insert((ObjectType::ProjectRoleTemplateBinding, prtb_id, Some(d_project_id.clone())), patch);
                     }
                 }
             }
+        } else {
+            debug!("Project `{}` not found in current state", d_project_id);
+            // Missing project so create it
+            
         }
     }
     info!("Total patches computed: {}", patches.len());

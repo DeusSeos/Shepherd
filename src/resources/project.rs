@@ -1,14 +1,13 @@
 use std::path::Path;
 
 use anyhow::Result;
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_diff::SerdeDiff;
-use similar::{ChangeTag, TextDiff};
 use serde_json::Value;
+use similar::{ChangeTag, TextDiff};
 use tokio::fs::{metadata, read_to_string};
 use tracing::{error, info, trace};
-use reqwest::{ StatusCode};
-
 
 use rancher_client::{
     apis::{
@@ -33,15 +32,14 @@ use rancher_client::{
     },
 };
 
-
+use crate::models::{CreatedObject, ObjectType, ResourceVersionMatch};
+use crate::traits::RancherResource;
+use crate::utils::diff::diff_boxed_hashmap_string_string;
+use crate::utils::logging::log_api_error;
 use crate::{
     deserialize_object,
     utils::file::{file_extension_from_format, FileFormat},
 };
-use crate::utils::logging::log_api_error;
-use crate::utils::diff::diff_boxed_hashmap_string_string;
-use crate::traits::RancherResource;
-use crate::models::{CreatedObject, ObjectType, ResourceVersionMatch};
 
 pub const PROJECT_EXCLUDE_PATHS: &[&str] = &[
     "metadata.creationTimestamp",
@@ -54,101 +52,78 @@ pub const PROJECT_EXCLUDE_PATHS: &[&str] = &[
     "status",
 ];
 
-
 impl RancherResource for Project {
     type ApiType = IoCattleManagementv3Project;
 
-    
     fn resource_type() -> ObjectType {
         ObjectType::Project
     }
-    
+
     fn exclude_paths() -> &'static [&'static str] {
         PROJECT_EXCLUDE_PATHS
     }
-    
+
     fn try_from_api(value: Self::ApiType) -> Result<Self> {
         Project::try_from(value)
     }
-    
+
     fn try_into_api(self) -> Result<Self::ApiType> {
-        Ok(IoCattleManagementv3Project::try_from(self)?)
+        IoCattleManagementv3Project::try_from(self)
     }
-    
+
     fn id(&self) -> Option<String> {
         self.id.clone()
     }
-    
+
     fn namespace(&self) -> Option<String> {
         Some(self.cluster_name.clone()) // Assuming cluster_id is used as namespace
     }
-    
+
     fn resource_version(&self) -> Option<String> {
         self.resource_version.clone()
     }
-    
-    async fn list(config: &Configuration, namespace: Option<&str>) -> Result<Vec<Self::ApiType>> {
-        let ns = namespace.ok_or_else(|| anyhow::anyhow!("Namespace is required for listing projects"))?;
-        
-        let project_list = get_projects( config, ns, None, None, None, None, None, None ).await?;
-        
-        Ok(project_list.items)
-    }
-    
+
     async fn get(config: &Configuration, name: &str, namespace: &str) -> Result<Self> {
-        let result = find_project( config, namespace, name, None ).await;
-        
+        let result = find_project(config, namespace, name, None).await;
+
         let project = Self::handle_api_error(result, &format!("get project {}", name))?;
         Self::try_from_api(project)
     }
-    
+
     async fn create(&self, config: &Configuration) -> Result<CreatedObject> {
-        let ns = self.namespace().ok_or_else(|| anyhow::anyhow!("Namespace is required for creating projects"))?;
+        let ns = self
+            .namespace()
+            .ok_or_else(|| anyhow::anyhow!("Namespace is required for creating projects"))?;
         // Convert to API type
         let project_api = self.clone().try_into_api()?;
-        
+
         // Call API
-        let result = create_project( config, &ns, project_api ).await?;
-        
+        let result = create_project(config, &ns, project_api).await?;
+
         // Convert response to CreatedObject
         Ok(CreatedObject::Project(result))
     }
-    
 
     async fn update(&self, config: &Configuration, patch_value: Value) -> Result<CreatedObject> {
-        let ns = self.namespace().ok_or_else(|| anyhow::anyhow!("Namespace is required for updating projects"))?;
-    
-        let result = update_project(
-            config,
-            &self.id().unwrap_or_default(),
-            &ns,
-            patch_value
-        ).await?;
+        let ns = self
+            .namespace()
+            .ok_or_else(|| anyhow::anyhow!("Namespace is required for updating projects"))?;
+
+        let result =
+            update_project(config, &self.id().unwrap_or_default(), &ns, patch_value).await?;
         Ok(CreatedObject::Project(result))
     }
-    
+
     async fn delete(config: &Configuration, name: &str, namespace: &str) -> Result<CreatedObject> {
         // Call API, return of Result<Result<IoCattleManagementv3Project, IoK8sApimachineryPkgApisMetaV1Status>, Error>
-        let result = delete_project(
-            config,
-            namespace,
-            name,
-        ).await?;
-        
+        let result = delete_project(config, namespace, name).await?;
+
         match result {
-            Ok(project) => {
-                Ok(CreatedObject::Project(project))
-            }
-            Err(status) => {
-                Ok(CreatedObject::Status(status))
-            }
+            Ok(project) => Ok(CreatedObject::Project(project)),
+            Err(status) => Ok(CreatedObject::Status(status)),
         }
     }
 }
-
-
-
-
 
 /// Create a project from a given configuration
 /// # Arguments
@@ -283,7 +258,6 @@ pub async fn create_project(
     }
 }
 
-
 /// Get the list of projects for a cluster
 ///
 /// # Arguments
@@ -383,10 +357,9 @@ pub async fn get_projects(
                 }
             }
         }
-        Err(e) => {
-            match e {
-                Error::ResponseError(response_content) => {
-                    let msg = match response_content.status {
+        Err(e) => match e {
+            Error::ResponseError(response_content) => {
+                let msg = match response_content.status {
                         StatusCode::NOT_FOUND => format!("Project list not found for cluster: {}", cluster_id),
                         StatusCode::UNAUTHORIZED => format!(
                             "Unauthorized access while trying to get project list for cluster: {}",
@@ -405,19 +378,18 @@ pub async fn get_projects(
                             cluster_id, response_content
                         ),
                     };
-                    error!("{}", msg);
-                    Err(anyhow::anyhow!(msg))
-                },
-                _ => {
-                    let msg = format!(
-                        "Failed to get project list for cluster: {}. Error was: {:#?}",
-                        cluster_id, e
-                    );
-                    error!("{}", msg);
-                    Err(anyhow::anyhow!(msg))
-                }
+                error!("{}", msg);
+                Err(anyhow::anyhow!(msg))
             }
-        }
+            _ => {
+                let msg = format!(
+                    "Failed to get project list for cluster: {}. Error was: {:#?}",
+                    cluster_id, e
+                );
+                error!("{}", msg);
+                Err(anyhow::anyhow!(msg))
+            }
+        },
     }
 }
 
@@ -620,54 +592,52 @@ pub async fn update_project(
                 Err(anyhow::anyhow!(msg))
             }
         },
-        Err(e) => {
-            match e {
-                Error::ResponseError(response_content) => {
-                    let msg = match response_content.status {
-                        StatusCode::UNPROCESSABLE_ENTITY => {
-                            format!(
+        Err(e) => match e {
+            Error::ResponseError(response_content) => {
+                let msg = match response_content.status {
+                    StatusCode::UNPROCESSABLE_ENTITY => {
+                        format!(
                                 "Unprocessable entity when updating project with ID: {} in cluster: {}. Response: {:#?}",
                                 project_id, cluster_id, response_content.content
                             )
-                        }
-                        StatusCode::NOT_FOUND => {
-                            format!(
-                                "Project with ID: {} in cluster: {} not found",
-                                project_id, cluster_id
-                            )
-                        }
-                        StatusCode::UNAUTHORIZED => {
-                            format!(
+                    }
+                    StatusCode::NOT_FOUND => {
+                        format!(
+                            "Project with ID: {} in cluster: {} not found",
+                            project_id, cluster_id
+                        )
+                    }
+                    StatusCode::UNAUTHORIZED => {
+                        format!(
                                 "Unauthorized access while trying to patch project with ID: {} in cluster: {}",
                                 project_id, cluster_id
                             )
-                        }
-                        StatusCode::BAD_REQUEST => {
-                            format!(
+                    }
+                    StatusCode::BAD_REQUEST => {
+                        format!(
                                 "Bad request when updating project with ID: {} in cluster: {}. Request body was: {}",
                                 project_id, cluster_id, response_content.content
                             )
-                        }
-                        _ => {
-                            format!(
-                                "Failed to patch project with ID: {} in cluster: {}. Response: {:#?}",
-                                project_id, cluster_id, response_content
-                            )
-                        }
-                    };
-                    error!(msg);
-                    Err(anyhow::anyhow!(msg))
-                }
-                _ => {
-                    let msg = format!(
-                        "Failed to patch project with ID: {} in cluster: {}. Error: {:#?}",
-                        project_id, cluster_id, e
-                    );
-                    error!(msg);
-                    Err(anyhow::anyhow!(msg))
-                }
+                    }
+                    _ => {
+                        format!(
+                            "Failed to patch project with ID: {} in cluster: {}. Response: {:#?}",
+                            project_id, cluster_id, response_content
+                        )
+                    }
+                };
+                error!(msg);
+                Err(anyhow::anyhow!(msg))
             }
-        }
+            _ => {
+                let msg = format!(
+                    "Failed to patch project with ID: {} in cluster: {}. Error: {:#?}",
+                    project_id, cluster_id, e
+                );
+                error!(msg);
+                Err(anyhow::anyhow!(msg))
+            }
+        },
     }
 }
 
@@ -739,28 +709,26 @@ pub async fn delete_project(
                 }
             }
         }
-        Err(e) => {
-            match e {
-                Error::ResponseError(response_content) => {
-                    let msg = match response_content.status {
-                        StatusCode::NOT_FOUND => format!( "Project with ID: {} in cluster {} not found", project_id, cluster_id ),
-                        StatusCode::UNAUTHORIZED => format!( "Unauthorized access while trying to delete project with ID: {} in cluster {}", project_id, cluster_id ),
+        Err(e) => match e {
+            Error::ResponseError(response_content) => {
+                let msg = match response_content.status {
+                        StatusCode::NOT_FOUND => format!("Project with ID: {} in cluster {} not found", project_id, cluster_id ),
+                        StatusCode::UNAUTHORIZED => format!("Unauthorized access while trying to delete project with ID: {} in cluster {}", project_id, cluster_id ),
                         StatusCode::BAD_REQUEST => format!( "Bad request when deleting project with ID: {} in cluster {}. Request body was: {}", project_id, cluster_id, response_content.content ),
                         _ => format!( "Failed to delete project with ID: {} in cluster {}. Response: {:#?}", project_id, cluster_id, response_content ),
                     };
-                    error!("{}", msg);
-                    Err(anyhow::anyhow!("{}", msg))
-                }
-                _ => {
-                    let msg = format!(
-                        "Failed to patch project with ID: {} in cluster {}. Error: {:#?}",
-                        project_id, cluster_id, e
-                    );
-                    error!(msg);
-                    Err(anyhow::anyhow!(msg))
-                }
+                error!("{}", msg);
+                Err(anyhow::anyhow!("{}", msg))
             }
-        }
+            _ => {
+                let msg = format!(
+                    "Failed to patch project with ID: {} in cluster {}. Error: {:#?}",
+                    project_id, cluster_id, e
+                );
+                error!(msg);
+                Err(anyhow::anyhow!(msg))
+            }
+        },
     }
 }
 

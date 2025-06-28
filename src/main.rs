@@ -2,21 +2,20 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+
+use rancher_client::apis::configuration::Configuration;
 use shepherd::api::client::ShepherdClient;
 use shepherd::api::config::ShepherdConfig;
+use shepherd::download_current_configuration;
 use shepherd::error::{handle_result_collection, AppError};
 use shepherd::models::{MinimalObject, ObjectType};
+use shepherd::modify::{compare_and_update_infrastructure, update_objects, create_objects, delete_objects};
 use shepherd::utils::file::{
     get_minimal_object_from_contents, is_directory_empty, write_back_objects, FileFormat,
 };
 use shepherd::utils::git::{
-    commit_changes, get_deleted_files_and_contents, get_modified_files, get_new_uncommited_files,
-    init_git_repo_with_main_branch, pull_changes, push_changes, resolve_conflicts, safe_clone_repository, GitAuth, GitError,
+    collect_modifications, commit_changes, fetch_changes, get_deleted_file_contents, init_git_repo_with_name, merge, push_changes, safe_clone_repository, GitAuth, GitError
 };
-use shepherd::modify::{compare_and_update_configurations, create_objects, delete_objects};
-use shepherd::download_current_configuration;
-use rancher_client::apis::configuration::Configuration;
-
 
 use anyhow::Result;
 use git2::Repository;
@@ -25,19 +24,14 @@ use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
 use walkdir::WalkDir;
 
-// const RETRY_DELAY: Duration = Duration::from_millis(200);
-// const LOOP_INTERVAL: Duration = Duration::from_secs(60);
 
 fn init_tracing() {
-    // Initialize the tracing subscriber using RUST_LOG environment variable
-    // ignore statements not from this crate
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .with_file(true)
         .with_line_number(true)
         .init();
 }
-
 
 /// Runs the main loop of the configuration synchronization process.
 ///
@@ -48,7 +42,6 @@ fn init_tracing() {
 /// After that, it will enter a loop where it will:
 ///
 /// 1. Pull changes from the remote repository
-/// 2. Commit local changes
 /// 3. Push changes to the remote repository
 /// 4. Update the objects in the Rancher API if the local files have changed
 /// 5. Create new objects in the Rancher API if new files have been added
@@ -75,7 +68,8 @@ async fn run_sync(
     cluster_ids: Vec<String>,
     loop_interval: u64,
     retry_delay: u64,
-    branch: &str,
+    full_sync: i32,
+    branch_name: &str,
     auth_method: GitAuth,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Create a interval ticker
@@ -89,16 +83,25 @@ async fn run_sync(
         Ok(true) => {
             info!("Downloading required");
 
-            let _ = init_git_repo_with_main_branch(&config_folder_path, &remote_url, branch)
-                .map_err(|e| {
-                    error!("Failed to initialize git repo: {}", e);
-                    e
-                });
-
             let _ =
                 download_current_configuration(&client_config, config_folder_path, &file_format)
                     .await;
             // init git repo
+            init_git_repo_with_name(config_folder_path, remote_url, branch_name).map_err(|e| {
+                error!("Failed to initialize git repo: {}", e);
+                e
+            })?;
+
+            let repo = Repository::open(config_folder_path).map_err(|e| {
+                error!("Failed to open repository: {}", e);
+                e
+            })?;
+
+            // push changes
+            push_changes(&repo, branch_name, &auth_method).map_err(|e| {
+                error!("Failed to push changes: {}", e);
+                e
+            })?;
         }
         Ok(false) => {
             info!("Downloading not required");
@@ -108,103 +111,114 @@ async fn run_sync(
         }
     }
 
+    let mut count = 1;
+
     loop {
+
         interval_timer.tick().await;
 
         info!("Starting scheduled run at {}", chrono::Utc::now());
 
-        // Initialize repository if it doesn't exist
-        let repo = match Repository::open(&config_folder_path) {
-            Ok(repo) => repo,
-            Err(_) => {
-                info!("Repository not found, initializing...");
-                init_git_repo_with_main_branch(&config_folder_path, &remote_url, branch)?;
-                Repository::open(&config_folder_path).map_err(|e| {
-                    error!("Failed to open repository: {}", e);
-                    e
-                })?
-            }
-        };
+        // Open the repository if it exists error out if it doesn't
+        let repo = Repository::open(config_folder_path).map_err(|e| {
+            error!("Failed to open repository: {}", e);
+            e
+        })?;
 
         info!("Repository found");
-        info!("Pulling changes...");
-        // Pull changes
-        match pull_changes(&repo, branch, &auth_method) {
-            Ok(_) => info!("Successfully pulled changes"),
-            Err(e) => {
-                error!("Failed to pull changes: {}", e);
-                // Handle merge conflicts
-                resolve_conflicts(&repo, branch)?;
+
+        // fetch changes
+        let _ = fetch_changes(&repo, branch_name, &auth_method);
+
+        let (new_files, deleted_files,  modified_files) = collect_modifications(&repo, branch_name);
+
+        info!("New files: {:?}", new_files);
+
+        info!("Deleted files: {:?}", deleted_files);
+
+        info!("Modified files: {:?}", modified_files);
+
+        let deleted_files_and_contents = deleted_files.iter().map(|(object_type, path)| {
+            let contents = get_deleted_file_contents(path).unwrap();
+            (*object_type, path.clone(), contents)
+        }).collect::<Vec<(ObjectType, PathBuf, String)>>();
+
+        let _ = merge(&repo, branch_name, &auth_method);
+
+        let created_objects =
+            create_objects(client_config.clone(), new_files, 10, 5, retry_delay).await;
+
+        let (successes, mut errors) = handle_result_collection(created_objects);
+
+        // modify objects
+        let modified_objects = update_objects(client_config.clone(), modified_files).await;
+        let (_successes2, errors2) = handle_result_collection(modified_objects);
+        errors.extend(errors2);
+
+
+        // Write back the successfully created objects
+        write_back_objects(successes.clone(), file_format).await?;
+
+        let mut objects_to_delete: Vec<(ObjectType, MinimalObject)> = Vec::new();
+
+        for (object_type, _path, contents) in deleted_files_and_contents {
+            let minimal_object =
+                get_minimal_object_from_contents(object_type, &contents, &file_format)
+                    .await
+                    .unwrap();
+            objects_to_delete.push((object_type, minimal_object));
+        }
+        let deleted_objects = delete_objects(client_config.clone(), objects_to_delete).await;
+        let (_, delete_errors) = handle_result_collection(deleted_objects);
+
+        errors.extend(delete_errors);
+
+        if !successes.is_empty() {
+            // Commit local changes
+            let now = chrono::Utc::now();
+            let datetime = now.format("%Y-%m-%d %H:%M:%S").to_string();
+            let message = format!("Updated configuration at {}", datetime);
+            commit_changes(config_folder_path, &message)?;
+
+                // Push changes
+                match push_changes(&repo, branch_name, &auth_method) {
+                    Ok(_) => info!("Successfully pushed changes"),
+                    Err(e) => error!("Failed to push changes: {}", e),
+                }
             }
+
+        if count == full_sync {
+            
+            count = 1;
+            for cluster_id in &cluster_ids {
+                // This is a full sync where we check all the files and update the objects in the cluster
+                let _update_objects = compare_and_update_infrastructure(
+                        client_config.clone(),
+                        config_folder_path,
+                        cluster_id,
+                        &file_format,
+                    )
+                    .await;
+
+                }
         }
 
-        // Commit local changes
-        let now = chrono::Utc::now();
-        let datetime = now.format("%Y-%m-%d %H:%M:%S").to_string();
-        let message = format!("Updated configuration at {}", datetime);
-        commit_changes(&config_folder_path, &message)?;
-
-        // Push changes
-        match push_changes(&repo, branch, &auth_method) {
-            Ok(_) => info!("Successfully pushed changes"),
-            Err(e) => error!("Failed to push changes: {}", e),
-        }
-
-        // let cluster_id = cluster_ids[0].clone();
-
-        for cluster_id in cluster_ids.iter() {
-            let new_files = get_new_uncommited_files(&config_folder_path).await?;
-
-            let modified_files = get_modified_files(&config_folder_path).await?;
-
-            let deleted_files_and_contents =
-                get_deleted_files_and_contents(&config_folder_path).await?;
-
-            info!("New files: {:?}", new_files);
-
-            info!("Modified files: {:?}", modified_files);
-
-            info!(
-                "Deleted files: {:?}",
-                deleted_files_and_contents
-                    .iter()
-                    .map(|(object_type, path, _)| (object_type, path))
-                    .collect::<Vec<_>>()
-            );
-
-            let _update_objects = compare_and_update_configurations(
-                client_config.clone(),
-                &config_folder_path,
-                &cluster_id,
-                &file_format,
-            )
-            .await;
-            let created_objects =
-                create_objects(client_config.clone(), new_files, 10, 5, retry_delay).await;
-
-            let (successes, mut errors) = handle_result_collection(created_objects);
-
-            // Write back the successfully created objects
-            write_back_objects(successes, file_format).await?;
-
-            let mut objects_to_delete: Vec<(ObjectType, MinimalObject)> = Vec::new();
-
-            for (object_type, _path, contents) in deleted_files_and_contents {
-                let minimal_object =
-                    get_minimal_object_from_contents(object_type, &contents, &file_format)
-                        .await
-                        .unwrap();
-                objects_to_delete.push((object_type, minimal_object));
-            }
-            let deleted_objects = delete_objects(client_config.clone(), objects_to_delete).await;
-            let (_, delete_errors) = handle_result_collection(deleted_objects);
-
-            errors.extend(delete_errors);
-        }
+        // increment count
+        count += 1;
+        
         info!("Run complete at {}", chrono::Utc::now());
     }
 }
 
+    /// Checks if the given repository is effectively empty, i.e. if it does not contain any files
+    /// that are not ignored by the repository's .gitignore files.
+    ///
+    /// Returns true if the repository is effectively empty and false if it is not.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `GitError::Other` if the repository has no working directory (i.e. it is a bare
+    /// repository).
 pub async fn is_repo_effectively_empty(repo: &Repository) -> Result<bool, GitError> {
     let workdir = repo.workdir().ok_or_else(|| {
         GitError::Other("Repository has no working directory (bare repo?)".to_string())
@@ -212,11 +226,13 @@ pub async fn is_repo_effectively_empty(repo: &Repository) -> Result<bool, GitErr
 
     let root = workdir.to_path_buf();
 
+    // Iterate over all the files in the repository and if all the files are ignored, return true else false
     for entry in WalkDir::new(&root)
         .into_iter()
         .filter_entry(|e| e.file_name() != ".git")
         .filter_map(Result::ok)
         .filter(|e| e.file_type().is_file())
+        .filter(|e| e.file_name() != ".gitignore")
     {
         let path: PathBuf = entry.path().to_path_buf();
 
@@ -230,20 +246,19 @@ pub async fn is_repo_effectively_empty(repo: &Repository) -> Result<bool, GitErr
     Ok(true)
 }
 
-
-    /// Checks if a download of the remote repository is required by checking if the local config
-    /// folder is empty. If the folder is empty, it clones the remote repository into the folder
-    /// and checks if the repository is empty after cloning. If the repository is empty, it returns
-    /// true, indicating that a download is required. If the folder is not empty, it returns false.
-    /// If an error occurs during the check, it returns true.
-    ///
-    /// # Arguments
-    /// * `config_folder_path` - Path to the local config folder
-    /// * `remote_url` - URL of the remote repository
-    /// * `auth_method` - Authentication method to use when cloning the repository
-    ///
-    /// # Returns
-    /// * `Result<bool, Box<dyn std::error::Error>>` - Result indicating whether a download is required
+/// Checks if a download of the remote repository is required by checking if the local config
+/// folder is empty. If the folder is empty, it clones the remote repository into the folder
+/// and checks if the repository is empty after cloning. If the repository is empty, it returns
+/// true, indicating that a download is required. If the folder is not empty, it returns false.
+/// If an error occurs during the check, it returns true.
+///
+/// # Arguments
+/// * `config_folder_path` - Path to the local config folder
+/// * `remote_url` - URL of the remote repository
+/// * `auth_method` - Authentication method to use when cloning the repository
+///
+/// # Returns
+/// * `Result<bool, Box<dyn std::error::Error>>` - Result indicating whether a download is required
 async fn download_required(
     config_folder_path: &Path,
     remote_url: &str,
@@ -261,7 +276,7 @@ async fn download_required(
 
                     let repo = Repository::open(config_folder_path)?;
                     if is_repo_effectively_empty(&repo).await? {
-                        info!("Repository is empty after cloning (ignoring .git and .gitignored files)");
+                        info!("Repository is empty after cloning (ignoring .git folder and .gitignored file)");
                         return Ok(true);
                     }
 
@@ -275,7 +290,12 @@ async fn download_required(
         }
         Ok(false) => {
             info!("Directory is not empty: {}", config_folder_path.display());
-            // Handle non-empty directory case
+            // Check if there is a .git folder
+            let repo = Repository::open(config_folder_path)?;
+            if is_repo_effectively_empty(&repo).await? {
+                info!("Repository is empty after cloning (ignoring .git folder and .gitignored file)");
+                return Ok(true);
+            }
             Ok(false)
         }
         Err(e) => {
@@ -312,7 +332,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     debug!("App config: {}", app_config);
 
-
     let auth_method = app_config.auth_method;
     let branch = app_config.branch;
     let cluster_ids = app_config.cluster_names.unwrap();
@@ -325,8 +344,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let remote_url = app_config.remote_git_url.unwrap();
     // in milliseconds
     let retry_delay = app_config.retry_delay;
+    let full_sync = app_config.full_sync;
     let token = app_config.token;
-    
+
     let client = ShepherdClient::new(&endpoint_url, &token, insecure);
     let client_config = client.config.clone();
 
@@ -338,6 +358,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cluster_ids,
         loop_interval,
         retry_delay,
+        full_sync,
         &branch,
         auth_method,
     )

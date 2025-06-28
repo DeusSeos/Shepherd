@@ -41,11 +41,6 @@ pub const RT_EXCLUDE_PATHS: &[&str] = &[
 impl RancherResource for RoleTemplate {
     type ApiType = IoCattleManagementv3RoleTemplate;
 
-    async fn list(config: &Configuration, _: Option<&str>) -> Result<Vec<Self::ApiType>> {
-
-        let bindings_list = get_role_templates(config, None, None, None, None, None, None).await?;
-        Ok(bindings_list.items)
-    }
 
     async fn get(config: &Configuration, name: &str, _: &str) -> Result<Self> {
         let result = find_role_template(config, name, None).await;
@@ -85,7 +80,7 @@ impl RancherResource for RoleTemplate {
     }
     
     fn try_into_api(self) -> Result<Self::ApiType> {
-        Ok(IoCattleManagementv3RoleTemplate::try_from(self)?)
+        IoCattleManagementv3RoleTemplate::try_from(self)
     }
     
     fn id(&self) -> Option<String> {
@@ -405,9 +400,9 @@ pub async fn get_role_templates(
             match e {
                 Error::ResponseError(response_content) => {
                     let msg = match response_content.status {
-                        StatusCode::NOT_FOUND => format!( "Role templates not found" ), 
-                        StatusCode::UNAUTHORIZED => format!( "Unauthorized access while trying to get role templates",  ) ,
-                        StatusCode::FORBIDDEN => format!( "Forbidden access while trying to get role templates." ) ,
+                        StatusCode::NOT_FOUND => "Role templates not found".to_string(), 
+                        StatusCode::UNAUTHORIZED => "Unauthorized access while trying to get role templates".to_string() ,
+                        StatusCode::FORBIDDEN => "Forbidden access while trying to get role templates.".to_string() ,
                         _ => format!( "Failed to get role templates. Response: {:#?}", response_content ), };
                     error!(msg);
                     Err(anyhow::anyhow!(msg))
@@ -653,6 +648,8 @@ pub async fn delete_role_template(
         }
     }
 }
+
+
 
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

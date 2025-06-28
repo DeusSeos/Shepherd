@@ -1,21 +1,20 @@
 use crate::api::config::RancherClusterConfig;
 use crate::traits::RancherResource;
-use crate::utils::diff::compute_cluster_diff;
+use crate::utils::diff::{calculate_json_patch, compute_cluster_diff};
 use crate::utils::file::FileFormat;
 use crate::models::{CreatedObject, MinimalObject};
-use crate::resources::project::{create_project, update_project};
-use crate::resources::prtb::update_project_role_template_binding;
-use crate::resources::rt::update_role_template;
+use crate::resources::project::{create_project, find_project, update_project, PROJECT_EXCLUDE_PATHS};
+use crate::resources::prtb::{find_project_role_template_binding, update_project_role_template_binding, PRTB_EXCLUDE_PATHS};
+use crate::resources::rt::{find_role_template, update_role_template, RT_EXCLUDE_PATHS};
 use crate::{
-    await_handles, load_configuration, load_configuration_from_rancher, load_object, ObjectType,
+    await_handles, clean_up_value, load_configuration, load_configuration_from_rancher, load_object, ObjectType
 };
 use crate::{poll_project_ready, poll_role_template_ready, retry_async, RoleTemplate};
 
 use rancher_client::apis::configuration::Configuration;
 use rancher_client::apis::management_cattle_io_v3_api::CreateManagementCattleIoV3NamespacedProjectRoleTemplateBindingError;
 use rancher_client::models::{
-    IoCattleManagementv3Project, IoCattleManagementv3ProjectRoleTemplateBinding,
-    IoK8sApimachineryPkgApisMetaV1ObjectMeta,
+    IoCattleManagementv3Project, IoCattleManagementv3ProjectRoleTemplateBinding, IoCattleManagementv3RoleTemplate, IoK8sApimachineryPkgApisMetaV1ObjectMeta
 };
 use reqwest::StatusCode;
 
@@ -42,7 +41,7 @@ use std::time::Duration;
 ///
 /// # Returns
 /// `Vec<Result<CreatedObject, Box<dyn std::error::Error + Send + Sync>>>`: A vector of results containing the created objects
-pub async fn compare_and_update_configurations(
+pub async fn compare_and_update_infrastructure(
     configuration: Arc<Configuration>,
     config_folder_path: &Path,
     cluster_id: &str,
@@ -70,6 +69,16 @@ pub async fn compare_and_update_configurations(
         .await
         .unwrap();
 
+    debug!(
+        "Loaded live configuration for cluster `{}`: {} ",
+        cluster_id, live_config
+    );
+    let live_config: RancherClusterConfig = RancherClusterConfig::try_from(live_config).unwrap();
+
+    // find the items in the stored config that are not in the live config
+    // we need to create them
+
+
     // Compute the differences
     let diffs = compute_cluster_diff(
         &serde_json::to_value(&live_config).unwrap(),
@@ -82,10 +91,12 @@ pub async fn compare_and_update_configurations(
 
     let mut results: Vec<Result<CreatedObject>> = Vec::new();
 
+
+
     // Iterate through the differences and handle them use tokio to do them in parallel
     let mut handles = Vec::with_capacity(diffs.len());
     for ((object_type, object_id, namespace), diff_value) in diffs {
-        let handle = tokio::spawn(handle_diff(
+        let handle = tokio::spawn(update_object(
             configuration.clone(),
             object_type,
             object_id,
@@ -108,7 +119,135 @@ pub async fn compare_and_update_configurations(
     results
 }
 
-async fn handle_diff(
+
+    /// Updates objects in the cluster with the given desired state.
+    ///
+    /// # Arguments
+    ///
+    /// * `configuration` - The configuration object
+    /// * `updated_files` - A vector of tuples containing the object type and the path to the file
+    ///     containing the desired state
+    ///
+    /// # Returns
+    ///
+    /// * `Vec<Result<CreatedObject>>` - A vector of results for each object, containing the created
+    ///     object or an error if the update failed
+pub async fn update_objects(
+    configuration: Arc<Configuration>,
+    updated_files: Vec<(ObjectType, PathBuf)>,
+) -> Vec<Result<CreatedObject>> {
+    let mut handles = Vec::with_capacity(updated_files.len());
+    for (object_type, file_path) in updated_files {
+
+        let mut desired_state;
+        let object_id: String;
+        let mut namespace: String = String::new();
+
+        match object_type {
+            ObjectType::Project => {
+                let object = load_object::<Project>(&file_path).await.unwrap();
+                object_id = object.id.clone().unwrap();
+                namespace = object.namespace.clone();
+                // convert object to IoCattleManagementv3Project
+                let object = IoCattleManagementv3Project::try_from(object).unwrap();
+                desired_state = serde_json::to_value(object).unwrap();
+            }
+            ObjectType::ProjectRoleTemplateBinding => {
+                let object = load_object::<ProjectRoleTemplateBinding>(&file_path).await.unwrap();
+                object_id = object.id.clone();
+                namespace = object.namespace.clone();
+                // convert object to IoCattleManagementv3ProjectRoleTemplateBinding
+                let object = IoCattleManagementv3ProjectRoleTemplateBinding::try_from(object).unwrap();
+                desired_state = serde_json::to_value(object).unwrap();
+            }
+            ObjectType::RoleTemplate => {
+                let object = load_object::<RoleTemplate>(&file_path).await.unwrap();
+                object_id = object.id.clone();
+                // convert object to IoCattleManagementv3RoleTemplate
+                let object = IoCattleManagementv3RoleTemplate::try_from(object).unwrap();
+                desired_state = serde_json::to_value(object).unwrap();
+            }
+            _ => 
+            {
+                // skip unsupported object types
+                error!("Unsupported object type: {:?}", object_type);
+                continue;
+            },
+        }
+
+        // create a handle to update the object
+        // it will get the object from the Rancher API
+        // calculate the diff
+        // update the object
+        let handle = tokio::spawn({
+            let configuration = configuration.clone();
+            let object_type = object_type;
+            let object_id = object_id.clone();
+            let namespace = namespace.clone();
+            let mut diff = None;
+            
+            // find the object
+            match object_type {
+                ObjectType::Project => {
+                    let project: IoCattleManagementv3Project = find_project(&configuration, &namespace, &object_id, None).await.unwrap();
+                    let mut current_state = serde_json::to_value(&project).unwrap();
+                    trace!("Current state: {:#?}", current_state);
+                    trace!("Desired state: {:#?}", desired_state);
+                    // clean both states
+                    clean_up_value(&mut current_state, PROJECT_EXCLUDE_PATHS);
+                    clean_up_value(&mut desired_state, PROJECT_EXCLUDE_PATHS);
+                    diff = calculate_json_patch::<IoCattleManagementv3Project>(&current_state, &desired_state);
+                    trace!("Diff: {:#?}", diff);
+                }
+                ObjectType::ProjectRoleTemplateBinding => {
+                    let prtb = find_project_role_template_binding(&configuration, &namespace, &object_id).await.unwrap();
+                    let mut current_state = serde_json::to_value(&prtb).unwrap();
+                    clean_up_value(&mut current_state, PRTB_EXCLUDE_PATHS);
+                    clean_up_value(&mut desired_state, PRTB_EXCLUDE_PATHS);
+                    diff = calculate_json_patch::<IoCattleManagementv3ProjectRoleTemplateBinding>(&current_state, &desired_state);
+                }
+                ObjectType::RoleTemplate => {
+                    let rt = find_role_template(&configuration, &object_id, None).await.unwrap();
+                    let mut current_state = serde_json::to_value(&rt).unwrap();
+                    clean_up_value(&mut current_state, RT_EXCLUDE_PATHS);
+                    clean_up_value(&mut desired_state, RT_EXCLUDE_PATHS);
+                    diff = calculate_json_patch::<IoCattleManagementv3RoleTemplate>(&current_state, &desired_state);
+                }
+                _ => 
+                {
+                    // skip unsupported object types
+                    error!("Unsupported object type: {:?}", object_type);
+                    
+                },
+            }
+
+            async move {
+                if diff.is_none() {
+                    error!("No diff found for object type: {:?}", object_type);
+                    return Err(anyhow::anyhow!("No diff found for object type: {:?}", object_type));
+                }
+                update_object(configuration, object_type, object_id,Some(namespace), diff.unwrap()).await
+            }
+            
+        });
+
+        handles.push(handle);
+        
+    }
+
+    let mut results = Vec::new();
+    for handle in handles {
+        match handle.await {
+            Ok(object) => results.push(object),
+            Err(join_err) => results.push(Err(anyhow::anyhow!(join_err))),
+        }
+    }
+    results
+
+
+}
+
+async fn update_object(
     configuration: Arc<Configuration>,
     object_type: ObjectType,
     object_id: String,
@@ -225,7 +364,7 @@ async fn delete_object(
             RoleTemplate::delete(configuration, name, namespace).await
             // RoleTemplate::delete(configuration, name, namespace).await?;
         },
-        _ => return Err(anyhow::anyhow!("Unsupported object type: {:?}", object_type)),
+        _ => Err(anyhow::anyhow!("Unsupported object type: {:?}", object_type)),
     }
     
 }
