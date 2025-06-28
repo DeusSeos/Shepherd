@@ -8,7 +8,7 @@ use async_recursion::async_recursion;
 use git2::{
     Commit, Error as Git2Error, Index, IndexAddOption, Oid, ProxyOptions, PushOptions,
     RemoteCallbacks, Repository, Signature, Status, StatusOptions,
-    Diff, DiffOptions, Delta
+    DiffOptions, Delta
 };
 
 use serde::{Deserialize, Serialize};

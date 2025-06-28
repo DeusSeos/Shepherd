@@ -3,11 +3,11 @@ use crate::traits::RancherResource;
 use crate::utils::diff::{calculate_json_patch, compute_cluster_diff};
 use crate::utils::file::FileFormat;
 use crate::models::{CreatedObject, MinimalObject};
-use crate::resources::project::{create_project, find_project, get_projects, update_project};
-use crate::resources::prtb::{find_project_role_template_binding, update_project_role_template_binding};
-use crate::resources::rt::{find_role_template, update_role_template};
+use crate::resources::project::{create_project, find_project, update_project, PROJECT_EXCLUDE_PATHS};
+use crate::resources::prtb::{find_project_role_template_binding, update_project_role_template_binding, PRTB_EXCLUDE_PATHS};
+use crate::resources::rt::{find_role_template, update_role_template, RT_EXCLUDE_PATHS};
 use crate::{
-    await_handles, load_configuration, load_configuration_from_rancher, load_object, ObjectType,
+    await_handles, clean_up_value, load_configuration, load_configuration_from_rancher, load_object, ObjectType
 };
 use crate::{poll_project_ready, poll_role_template_ready, retry_async, RoleTemplate};
 
@@ -139,7 +139,7 @@ pub async fn update_objects(
     let mut handles = Vec::with_capacity(updated_files.len());
     for (object_type, file_path) in updated_files {
 
-        let desired_state;
+        let mut desired_state;
         let object_id: String;
         let mut namespace: String = String::new();
 
@@ -148,17 +148,23 @@ pub async fn update_objects(
                 let object = load_object::<Project>(&file_path).await.unwrap();
                 object_id = object.id.clone().unwrap();
                 namespace = object.namespace.clone();
+                // convert object to IoCattleManagementv3Project
+                let object = IoCattleManagementv3Project::try_from(object).unwrap();
                 desired_state = serde_json::to_value(object).unwrap();
             }
             ObjectType::ProjectRoleTemplateBinding => {
                 let object = load_object::<ProjectRoleTemplateBinding>(&file_path).await.unwrap();
                 object_id = object.id.clone();
                 namespace = object.namespace.clone();
+                // convert object to IoCattleManagementv3ProjectRoleTemplateBinding
+                let object = IoCattleManagementv3ProjectRoleTemplateBinding::try_from(object).unwrap();
                 desired_state = serde_json::to_value(object).unwrap();
             }
             ObjectType::RoleTemplate => {
                 let object = load_object::<RoleTemplate>(&file_path).await.unwrap();
                 object_id = object.id.clone();
+                // convert object to IoCattleManagementv3RoleTemplate
+                let object = IoCattleManagementv3RoleTemplate::try_from(object).unwrap();
                 desired_state = serde_json::to_value(object).unwrap();
             }
             _ => 
@@ -183,18 +189,28 @@ pub async fn update_objects(
             // find the object
             match object_type {
                 ObjectType::Project => {
-                    let project = find_project(&configuration, &namespace, &object_id, None).await.unwrap();
-                    let current_state = serde_json::to_value(&project).unwrap();
+                    let project: IoCattleManagementv3Project = find_project(&configuration, &namespace, &object_id, None).await.unwrap();
+                    let mut current_state = serde_json::to_value(&project).unwrap();
+                    trace!("Current state: {:#?}", current_state);
+                    trace!("Desired state: {:#?}", desired_state);
+                    // clean both states
+                    clean_up_value(&mut current_state, PROJECT_EXCLUDE_PATHS);
+                    clean_up_value(&mut desired_state, PROJECT_EXCLUDE_PATHS);
                     diff = calculate_json_patch::<IoCattleManagementv3Project>(&current_state, &desired_state);
+                    trace!("Diff: {:#?}", diff);
                 }
                 ObjectType::ProjectRoleTemplateBinding => {
                     let prtb = find_project_role_template_binding(&configuration, &namespace, &object_id).await.unwrap();
-                    let current_state = serde_json::to_value(&prtb).unwrap();
+                    let mut current_state = serde_json::to_value(&prtb).unwrap();
+                    clean_up_value(&mut current_state, PRTB_EXCLUDE_PATHS);
+                    clean_up_value(&mut desired_state, PRTB_EXCLUDE_PATHS);
                     diff = calculate_json_patch::<IoCattleManagementv3ProjectRoleTemplateBinding>(&current_state, &desired_state);
                 }
                 ObjectType::RoleTemplate => {
                     let rt = find_role_template(&configuration, &object_id, None).await.unwrap();
-                    let current_state = serde_json::to_value(&rt).unwrap();
+                    let mut current_state = serde_json::to_value(&rt).unwrap();
+                    clean_up_value(&mut current_state, RT_EXCLUDE_PATHS);
+                    clean_up_value(&mut desired_state, RT_EXCLUDE_PATHS);
                     diff = calculate_json_patch::<IoCattleManagementv3RoleTemplate>(&current_state, &desired_state);
                 }
                 _ => 

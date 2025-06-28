@@ -14,7 +14,7 @@ use shepherd::utils::file::{
     get_minimal_object_from_contents, is_directory_empty, write_back_objects, FileFormat,
 };
 use shepherd::utils::git::{
-    self, collect_modifications, commit_changes, fetch_changes, get_deleted_file_contents, get_deleted_files_and_contents, get_modified_files, get_new_files, get_new_uncommited_files, init_git_repo_with_name, merge, push_changes, resolve_conflicts, safe_clone_repository, GitAuth, GitError
+    collect_modifications, commit_changes, fetch_changes, get_deleted_file_contents, init_git_repo_with_name, merge, push_changes, safe_clone_repository, GitAuth, GitError
 };
 
 use anyhow::Result;
@@ -72,6 +72,7 @@ async fn run_sync(
     cluster_ids: Vec<String>,
     loop_interval: u64,
     retry_delay: u64,
+    full_sync: i32,
     branch_name: &str,
     auth_method: GitAuth,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -114,7 +115,10 @@ async fn run_sync(
         }
     }
 
+    let mut count = 1;
+
     loop {
+
         interval_timer.tick().await;
 
         info!("Starting scheduled run at {}", chrono::Utc::now());
@@ -173,9 +177,6 @@ async fn run_sync(
 
         errors.extend(delete_errors);
 
-
-
-
         if !successes.is_empty() {
             // Commit local changes
             let now = chrono::Utc::now();
@@ -190,19 +191,24 @@ async fn run_sync(
                 }
             }
 
-            // let full_sync = false;
+        if count == full_sync {
+            
+            count = 1;
+            for cluster_id in &cluster_ids {
+                // This is a full sync where we check all the files and update the objects in the cluster
+                let _update_objects = compare_and_update_infrastructure(
+                        client_config.clone(),
+                        &config_folder_path,
+                        &cluster_id,
+                        &file_format,
+                    )
+                    .await;
 
-            // if full_sync {
-            // // This is a full sync where we check all the files and update the objects in the cluster
-            // let _update_objects = compare_and_update_infrastructure(
-            //         client_config.clone(),
-            //         &config_folder_path,
-            //         &cluster_id,
-            //         &file_format,
-            //     )
-            //     .await;
+                }
+        }
 
-            // }
+        // increment count
+        count += 1;
         
         info!("Run complete at {}", chrono::Utc::now());
     }
@@ -342,6 +348,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let remote_url = app_config.remote_git_url.unwrap();
     // in milliseconds
     let retry_delay = app_config.retry_delay;
+    let full_sync = app_config.full_sync;
     let token = app_config.token;
 
     let client = ShepherdClient::new(&endpoint_url, &token, insecure);
@@ -355,6 +362,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cluster_ids,
         loop_interval,
         retry_delay,
+        full_sync,
         &branch,
         auth_method,
     )

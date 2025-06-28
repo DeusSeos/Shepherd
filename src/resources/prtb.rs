@@ -1,7 +1,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{models::{CreatedObject, ObjectType, ResourceVersionMatch}, resources::prtb, traits::RancherResource, utils::logging::log_api_error};
+use crate::{models::{CreatedObject, ObjectType, ResourceVersionMatch}, traits::RancherResource, utils::logging::log_api_error};
 use anyhow::Result;
 
 use reqwest::StatusCode;

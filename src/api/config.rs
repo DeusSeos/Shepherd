@@ -135,6 +135,8 @@ pub struct ShepherdConfig {
     #[serde(default = "default_retry_delay")]
     pub retry_delay: u64,
     pub auth_method: GitAuth,
+    #[serde(default = "default_full_sync")]
+    pub full_sync: i32,
     #[serde(default = "default_branch")]
     pub branch: String,
     #[serde(default = "default_insecure")]
@@ -195,9 +197,15 @@ fn default_branch() -> String {
     "main".to_string()
 }
 
+fn default_full_sync() -> i32 {
+    5
+}
+
 fn default_insecure() -> bool {
     false
 }
+
+
 
 
 impl Display for ShepherdConfig {
@@ -222,6 +230,7 @@ impl Display for ShepherdConfig {
         )?;
         writeln!(f, "Loop interval: {} seconds", self.loop_interval)?;
         writeln!(f, "Retry delay: {} milliseconds", self.retry_delay)?;
+        writeln!(f, "Full sync: {}", self.full_sync)?;
         writeln!(f, "Auth method: {:#?}", self.auth_method)?;
         writeln!(f, "Branch: {}", self.branch)?;
         writeln!(f, "Insecure: {}", self.insecure)?;
