@@ -52,6 +52,7 @@ cluster_names = ["cluster1", "cluster2"]
 loop_interval = 60
 # in milliseconds
 retry_delay = 500
+full_sync = 5
 branch = "main"
 insecure = false
 
@@ -71,7 +72,7 @@ Run the binary with `./target/release/shepherd`.
 
 ### From releases
 
-Download the binary from [here](https://github.com/DeusSeos/Shepherd/releases)
+Download the binary from [sheperd releases](https://github.com/DeusSeos/Shepherd/releases)
 
 Run the binary with `./shepherd`
 
