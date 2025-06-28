@@ -4,7 +4,7 @@ use anyhow::{bail, Context, Result};
 
 use serde::{de::DeserializeOwned, Serialize, Deserialize};
 use tokio::{fs::OpenOptions, io::AsyncWriteExt, task::JoinHandle, fs::read_dir};
-use tracing::{debug, error};
+use tracing::{debug, error, trace};
 
 use crate::{load_object, models::{CreatedObject, MinimalObject, ObjectType}, resources::project::Project, resources::prtb::ProjectRoleTemplateBinding, resources::rt::RoleTemplate, serialize_object};
 
@@ -128,7 +128,7 @@ pub async fn write_back_objects(
     file_format: FileFormat,
 ) -> anyhow::Result<Vec<PathBuf>> {
     let mut handles: Vec<JoinHandle<anyhow::Result<PathBuf>>> = Vec::new();
-    let mut results = Vec::new();
+    let mut results: Vec<PathBuf> = Vec::new();
 
     // Spawn tasks to write back objects
     for (file_path, created_object) in successes {
@@ -136,19 +136,20 @@ pub async fn write_back_objects(
         handles.push(tokio::spawn(async move {
             match created_object {
                 CreatedObject::ProjectRoleTemplateBinding(created) => {
-                    debug!("Writing PRTB: {:#?}", created);
+                    trace!("Writing PRTB");
                     let convert = ProjectRoleTemplateBinding::try_from(created)?;
                     write_object_to_file(&file_path, &format, &convert).await?;
                     Ok(file_path)
                 }
                 CreatedObject::Project(created) => {
-                    debug!("Writing Project: {:#?}", created);
+                    trace!("Writing Project");
                     let convert = Project::try_from(created)?;
                     write_object_to_file(&file_path, &format, &convert).await?;
                     Ok(file_path)
                 }
                 CreatedObject::RoleTemplate(created) => {
-                    debug!("Writing Role Template: {:#?}", created);
+                    debug!("Writing RT");
+                    trace!("Writing Role Template: {:#?}", created);
                     let convert = RoleTemplate::try_from(created)?;
                     write_object_to_file(&file_path, &format, &convert).await?;
                     Ok(file_path)
