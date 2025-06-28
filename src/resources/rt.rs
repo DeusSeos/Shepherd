@@ -80,7 +80,7 @@ impl RancherResource for RoleTemplate {
     }
     
     fn try_into_api(self) -> Result<Self::ApiType> {
-        Ok(IoCattleManagementv3RoleTemplate::try_from(self)?)
+        IoCattleManagementv3RoleTemplate::try_from(self)
     }
     
     fn id(&self) -> Option<String> {
@@ -400,9 +400,9 @@ pub async fn get_role_templates(
             match e {
                 Error::ResponseError(response_content) => {
                     let msg = match response_content.status {
-                        StatusCode::NOT_FOUND => format!( "Role templates not found" ), 
-                        StatusCode::UNAUTHORIZED => format!( "Unauthorized access while trying to get role templates",  ) ,
-                        StatusCode::FORBIDDEN => format!( "Forbidden access while trying to get role templates." ) ,
+                        StatusCode::NOT_FOUND => "Role templates not found".to_string(), 
+                        StatusCode::UNAUTHORIZED => "Unauthorized access while trying to get role templates".to_string() ,
+                        StatusCode::FORBIDDEN => "Forbidden access while trying to get role templates.".to_string() ,
                         _ => format!( "Failed to get role templates. Response: {:#?}", response_content ), };
                     error!(msg);
                     Err(anyhow::anyhow!(msg))

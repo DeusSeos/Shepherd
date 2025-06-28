@@ -12,7 +12,7 @@ pub const CLIENT_VERSION: &str = "{}";
 pub const FULL_CLIENT_ID: &str = "{}";"#,
         client_name,
         client_version,
-        format!("{}/{}", client_name, client_version)
+        format_args!("{}/{}", client_name, client_version)
     );
 
     let out_dir = env::var("OUT_DIR").unwrap();

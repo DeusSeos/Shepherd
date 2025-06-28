@@ -134,7 +134,6 @@ pub async fn safe_clone_repository(
                     }
                     _ => Err(git2::Error::from_str("Unsupported authentication method")),
                 }
-                .map_err(|e| e.into())
             })
             .transfer_progress(|progress| {
                 debug!(
@@ -459,7 +458,7 @@ pub fn merge(
 
     let mut callbacks = RemoteCallbacks::new();
     callbacks.credentials(|url, username_from_url, allowed_types| {
-        match_credentials(url, username_from_url, allowed_types, auth_method).map_err(|e| e.into())
+        match_credentials(url, username_from_url, allowed_types, auth_method)
     });
 
     let mut remote = repo.find_remote("origin")?;
@@ -469,7 +468,7 @@ pub fn merge(
 
     let mut callbacks = RemoteCallbacks::new();
     callbacks.credentials(|url, username_from_url, allowed_types| {
-        match_credentials(url, username_from_url, allowed_types, auth_method).map_err(|e| e.into())
+        match_credentials(url, username_from_url, allowed_types, auth_method)
     });
 
     let mut proxy_options = ProxyOptions::new();
@@ -682,7 +681,6 @@ pub fn push_repo_to_remote(
                     }
                 }
             }
-            .map_err(|e| e.into())
         })
         .transfer_progress(|progress| {
             debug!(
@@ -752,7 +750,7 @@ pub fn fetch_changes(
 
     let mut callbacks = RemoteCallbacks::new();
     callbacks.credentials(|url, username_from_url, allowed_types| {
-        match_credentials(url, username_from_url, allowed_types, auth_method).map_err(|e| e.into())
+        match_credentials(url, username_from_url, allowed_types, auth_method)
     });
 
     let mut remote = repo.find_remote("origin")?;
@@ -762,7 +760,7 @@ pub fn fetch_changes(
 
     let mut callbacks = RemoteCallbacks::new();
     callbacks.credentials(|url, username_from_url, allowed_types| {
-        match_credentials(url, username_from_url, allowed_types, auth_method).map_err(|e| e.into())
+        match_credentials(url, username_from_url, allowed_types, auth_method)
     });
 
     let mut proxy_options = ProxyOptions::new();
@@ -840,7 +838,7 @@ pub fn push_changes(
 ) -> Result<(), GitError> {
     let mut remote_callbacks = RemoteCallbacks::new();
     remote_callbacks.credentials(|url, username_from_url, allowed_types| {
-        match_credentials(url, username_from_url, allowed_types, auth_method).map_err(|e| e.into())
+        match_credentials(url, username_from_url, allowed_types, auth_method)
     });
 
     let mut proxy_options = ProxyOptions::new();
@@ -1073,7 +1071,6 @@ pub async fn get_new_files(folder_path: &Path, remote_branch: &str) -> Result<Ve
 /// A vector containing the absolute paths of all deleted files
 /// in the specified folder and its subfolders, along with their corresponding
 /// object type.
-
 #[async_backtrace::framed]
 #[async_recursion]
 pub async fn get_deleted_files(
@@ -1255,7 +1252,7 @@ fn test_collect_modifications() {
 
 
 /// Collects deleted files and their contents from a given folder path.
-
+/// 
 /// # Arguments
 /// * `folder_path` - The path of the folder to collect deleted files from.
 ///

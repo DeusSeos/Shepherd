@@ -181,7 +181,7 @@ pub async fn update_objects(
         // update the object
         let handle = tokio::spawn({
             let configuration = configuration.clone();
-            let object_type = object_type.clone();
+            let object_type = object_type;
             let object_id = object_id.clone();
             let namespace = namespace.clone();
             let mut diff = None;
@@ -364,7 +364,7 @@ async fn delete_object(
             RoleTemplate::delete(configuration, name, namespace).await
             // RoleTemplate::delete(configuration, name, namespace).await?;
         },
-        _ => return Err(anyhow::anyhow!("Unsupported object type: {:?}", object_type)),
+        _ => Err(anyhow::anyhow!("Unsupported object type: {:?}", object_type)),
     }
     
 }

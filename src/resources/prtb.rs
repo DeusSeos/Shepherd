@@ -86,7 +86,7 @@ impl RancherResource for ProjectRoleTemplateBinding {
     }
     
     fn try_into_api(self) -> Result<Self::ApiType> {
-        Ok(IoCattleManagementv3ProjectRoleTemplateBinding::try_from(self)?)
+        IoCattleManagementv3ProjectRoleTemplateBinding::try_from(self)
     }
     
     fn id(&self) -> Option<String> {

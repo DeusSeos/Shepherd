@@ -68,7 +68,7 @@ impl RancherResource for Project {
     }
 
     fn try_into_api(self) -> Result<Self::ApiType> {
-        Ok(IoCattleManagementv3Project::try_from(self)?)
+        IoCattleManagementv3Project::try_from(self)
     }
 
     fn id(&self) -> Option<String> {

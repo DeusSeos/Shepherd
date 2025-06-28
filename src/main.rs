@@ -24,12 +24,8 @@ use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
 use walkdir::WalkDir;
 
-// const RETRY_DELAY: Duration = Duration::from_millis(200);
-// const LOOP_INTERVAL: Duration = Duration::from_secs(60);
 
 fn init_tracing() {
-    // Initialize the tracing subscriber using RUST_LOG environment variable
-    // ignore statements not from this crate
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .with_file(true)
@@ -96,7 +92,7 @@ async fn run_sync(
                 e
             })?;
 
-            let repo = Repository::open(&config_folder_path).map_err(|e| {
+            let repo = Repository::open(config_folder_path).map_err(|e| {
                 error!("Failed to open repository: {}", e);
                 e
             })?;
@@ -124,7 +120,7 @@ async fn run_sync(
         info!("Starting scheduled run at {}", chrono::Utc::now());
 
         // Open the repository if it exists error out if it doesn't
-        let repo = Repository::open(&config_folder_path).map_err(|e| {
+        let repo = Repository::open(config_folder_path).map_err(|e| {
             error!("Failed to open repository: {}", e);
             e
         })?;
@@ -144,7 +140,7 @@ async fn run_sync(
 
         let deleted_files_and_contents = deleted_files.iter().map(|(object_type, path)| {
             let contents = get_deleted_file_contents(path).unwrap();
-            (object_type.clone(), path.clone(), contents)
+            (*object_type, path.clone(), contents)
         }).collect::<Vec<(ObjectType, PathBuf, String)>>();
 
         let _ = merge(&repo, branch_name, &auth_method);
@@ -182,7 +178,7 @@ async fn run_sync(
             let now = chrono::Utc::now();
             let datetime = now.format("%Y-%m-%d %H:%M:%S").to_string();
             let message = format!("Updated configuration at {}", datetime);
-            commit_changes(&config_folder_path, &message)?;
+            commit_changes(config_folder_path, &message)?;
 
                 // Push changes
                 match push_changes(&repo, branch_name, &auth_method) {
@@ -198,8 +194,8 @@ async fn run_sync(
                 // This is a full sync where we check all the files and update the objects in the cluster
                 let _update_objects = compare_and_update_infrastructure(
                         client_config.clone(),
-                        &config_folder_path,
-                        &cluster_id,
+                        config_folder_path,
+                        cluster_id,
                         &file_format,
                     )
                     .await;

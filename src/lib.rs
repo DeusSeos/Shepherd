@@ -167,7 +167,7 @@ pub async fn download_current_configuration(
             .collect::<Result<_>>()?;
 
         for project in &projects {
-            let project_path = cluster_path.join(&project.id.clone().unwrap());
+            let project_path = cluster_path.join(project.id.clone().unwrap());
             if !project_path.exists() {
                 create_dir_all(&project_path)
                     .await
